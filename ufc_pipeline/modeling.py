@@ -86,13 +86,41 @@ STEP3B_MODEL_FEATURES = [
     "fighter_a_no_prior_stats",
     "fighter_b_no_prior_stats",
 ]
-ALLOWED_HISTORICAL_FEATURES = set(STEP3B_MODEL_FEATURES)
+
+# Step 3C: style-matchup interactions + rolling "against" stats (see
+# ufc_pipeline/matchup_features.py for the exact formulas). All are
+# pre-fight rolling aggregates / interactions of them — allowlisted by
+# exact name for the same reason as Step 3B. Positive = fighter A advantage.
+STEP3C_MODEL_FEATURES = [
+    "takedowns_allowed_per_15_diff",
+    "opp_takedown_attempts_per_15_diff",
+    "opp_sig_str_attempted_per_min_diff",
+    "control_time_absorbed_per_15_diff",
+    "knockdowns_absorbed_per_15_diff",
+    "submission_attempts_absorbed_per_15_diff",
+    "striking_matchup_net_advantage",
+    "striking_accuracy_matchup_net_advantage",
+    "takedown_matchup_net_advantage",
+    "takedown_accuracy_matchup_net_advantage",
+    "control_matchup_net_advantage",
+    "knockdown_matchup_net_advantage",
+    "submission_matchup_net_advantage",
+    "reach_volume_interaction",
+    "pace_pressure_advantage",
+    "opponent_pressure_absorption_advantage",
+    "matchup_history_missing",
+]
+ALLOWED_HISTORICAL_FEATURES = set(STEP3B_MODEL_FEATURES) | set(STEP3C_MODEL_FEATURES)
 
 # Any selected input feature matching one of these substrings aborts training.
 # (fighter_a_won is allowed as the TARGET only, and is checked separately.)
+# td_/ctrl/knockdown/sub_att cover the RAW fight_stats column names
+# (td_landed, ctrl_seconds, knockdowns, sub_attempts) so current-fight
+# totals can never sneak in as model inputs under their storage names.
 FORBIDDEN_FEATURE_PATTERNS = [
     "winner", "loser", "post", "method", "round", "odds", "rank",
     "sig_str", "takedown", "control", "result", "outcome",
+    "td_", "ctrl", "knockdown", "sub_att",
 ]
 
 
@@ -282,6 +310,40 @@ def select_features(
     return numeric, categorical, skipped
 
 
+def coerce_numeric_features(
+    df: pd.DataFrame,
+    numeric: list[str],
+    context: str = "model",
+) -> pd.DataFrame:
+    """Return a copy with numeric features coerced, or fail on bad values.
+
+    CSV inputs can turn a numeric feature into object dtype when one bad token
+    sneaks in. Median imputation would then fail inside sklearn with a less
+    useful error, so validate and coerce once at the boundary.
+    """
+    bad: list[str] = []
+    for col in numeric:
+        present = df[col].notna()
+        if not present.any():
+            continue
+        converted = pd.to_numeric(df.loc[present, col], errors="coerce")
+        invalid = present.copy()
+        invalid.loc[present] = converted.isna() | ~np.isfinite(converted.to_numpy())
+        if invalid.any():
+            examples = df.loc[invalid, col].astype(str).head(3).tolist()
+            bad.append(f"{col} (examples: {examples})")
+    if bad:
+        raise ValueError(
+            f"[{context}] non-numeric values in numeric feature columns:\n  - "
+            + "\n  - ".join(bad)
+        )
+
+    out = df.copy()
+    for col in numeric:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
 def train_and_evaluate(
     input_csv: str,
     model_output_dir: str = "data/models",
@@ -327,6 +389,7 @@ def train_and_evaluate(
     before = len(df)
     df = df[df[TARGET].notna() & df["fighter_a_expected_win_prob"].notna()]
     dropped = before - len(df)
+    df = coerce_numeric_features(df, numeric, context="train_and_evaluate")
     print(f"Rows: {len(df)} usable ({dropped} dropped for missing target/Elo prob)")
 
     # --- chronological split ------------------------------------------------
@@ -481,8 +544,13 @@ def compare_feature_sets(
     Default sets:
       step3_basic    : the Step 3 features (+ weight_class)
       step3_plus_3b  : Step 3 features + Step 3B rolling stats + flags
+      step3c_matchup : the above + Step 3C matchup features — added only
+                       when the input CSV actually carries 3C columns, so
+                       Step 3B-only workflows are unchanged.
     The untrained Elo baseline is always evaluated on the same test rows.
     """
+    df = pd.read_csv(input_csv)
+
     if feature_sets is None:
         feature_sets = {
             "step3_basic": {
@@ -494,8 +562,13 @@ def compare_feature_sets(
                 "categorical": list(DEFAULT_CATEGORICAL_FEATURES),
             },
         }
-
-    df = pd.read_csv(input_csv)
+        if any(f in df.columns for f in STEP3C_MODEL_FEATURES):
+            feature_sets["step3c_matchup"] = {
+                "numeric": list(DEFAULT_NUMERIC_FEATURES)
+                + list(STEP3B_MODEL_FEATURES)
+                + list(STEP3C_MODEL_FEATURES),
+                "categorical": list(DEFAULT_CATEGORICAL_FEATURES),
+            }
     before = len(df)
     df = df[df[TARGET].notna() & df["fighter_a_expected_win_prob"].notna()]
     dropped = before - len(df)
@@ -538,16 +611,12 @@ def compare_feature_sets(
             print(f"[{name}] skipped entirely: no usable numeric features")
             continue
         check_features_allowed(numeric + categorical)
-
-        # Validation: every numeric model input must actually be numeric.
-        non_numeric = [
-            c for c in numeric
-            if not pd.api.types.is_numeric_dtype(pd.to_numeric(df[c], errors="coerce"))
-        ]
-        if non_numeric:
-            raise ValueError(f"[{name}] non-numeric feature columns: {non_numeric}")
-
-        X_train, X_test = train[numeric + categorical], test[numeric + categorical]
+        df_model = coerce_numeric_features(df, numeric, context=name)
+        train_model, test_model = chronological_split(
+            df_model, test_size=test_size, split_date=split_date
+        )
+        X_train = train_model[numeric + categorical]
+        X_test = test_model[numeric + categorical]
         entry: dict = {"features_numeric": numeric,
                        "features_categorical": categorical,
                        "features_skipped": skipped}
@@ -610,12 +679,13 @@ def print_comparison(results: dict) -> None:
             print(f"{'RF: ' + name:<34}{fmt(entry['random_forest'])}")
 
     names = list(results["models"])
-    if len(names) >= 2:
-        base_ll = results["models"][names[0]]["logistic_regression"]["log_loss"]
-        full_ll = results["models"][names[1]]["logistic_regression"]["log_loss"]
-        elo_ll = results["elo_baseline"]["log_loss"]
-        verdict = "IMPROVE on" if full_ll < base_ll else "do NOT improve on"
+    elo_ll = results["elo_baseline"]["log_loss"]
+    # Each expanded feature set is judged against the previous one.
+    for prev, curr in zip(names, names[1:]):
+        prev_ll = results["models"][prev]["logistic_regression"]["log_loss"]
+        curr_ll = results["models"][curr]["logistic_regression"]["log_loss"]
+        verdict = "IMPROVES on" if curr_ll < prev_ll else "does NOT improve on"
         print(
-            f"\nStep 3B stats {verdict} the basic feature set "
-            f"(log loss {full_ll:.4f} vs {base_ll:.4f}; Elo baseline {elo_ll:.4f})."
+            f"\n{curr} {verdict} {prev} "
+            f"(log loss {curr_ll:.4f} vs {prev_ll:.4f}; Elo baseline {elo_ll:.4f})."
         )

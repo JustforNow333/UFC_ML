@@ -68,7 +68,7 @@ DIVISION_WEIGHT_LBS = {
 
 def division_weight_lbs(weight_class) -> float | None:
     """'Women's Flyweight' -> 125.0; Catch Weight/None -> None."""
-    if weight_class is None or (isinstance(weight_class, float) and pd.isna(weight_class)):
+    if _is_missing(weight_class):
         return None
     s = str(weight_class).strip().lower()
     s = re.sub(r"^women'?s\s+", "", s)
@@ -80,7 +80,7 @@ def url_slug(url) -> str | None:
 
     'http://ufcstats.com/fighter-details/93fe7332d16c6ad9' -> '93fe7332d16c6ad9'
     """
-    if url is None or (isinstance(url, float) and pd.isna(url)):
+    if _is_missing(url):
         return None
     s = str(url).strip().rstrip("/")
     if not s:
@@ -90,8 +90,21 @@ def url_slug(url) -> str | None:
 
 def _parse_weight_lbs(value) -> float | None:
     """'155 lbs.' -> 155.0; '--'/missing -> None."""
-    m = re.match(r"\s*(\d+(?:\.\d+)?)", str(value or ""))
+    m = re.match(r"\s*(\d+(?:\.\d+)?)", _text(value))
     return float(m.group(1)) if m else None
+
+
+def _is_missing(value) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _text(value) -> str:
+    return "" if _is_missing(value) else str(value).strip()
 
 
 def _age_at(fight_date: str, dob: str) -> float | None:
@@ -137,12 +150,12 @@ def load_greco_identities(tott_csv: str) -> list[SourceIdentity]:
         out.append(
             SourceIdentity(
                 slug=slug,
-                url=str(row.get("url")).strip(),
+                url=_text(row.get("url")),
                 raw_name=raw,
                 key=name_key(raw),
                 weight_lbs=_parse_weight_lbs(row.get("weight")),
                 dob=to_iso_date_or_none(row.get("dob"))
-                if str(row.get("dob") or "").strip() not in ("", "--") else None,
+                if _text(row.get("dob")) not in ("", "--") else None,
                 height_cm=parse_height_cm(row.get("height")),
                 reach_cm=parse_reach_cm(row.get("reach")),
             )

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ufc_pipeline.modeling import (  # noqa: E402
     TARGET,
     check_features_allowed,
+    coerce_numeric_features,
     chronological_split,
     evaluate_probs,
     train_and_evaluate,
@@ -242,3 +243,22 @@ def test_missing_requested_features_skipped_not_fatal(tmp_path):
     assert "reach_diff" in results["config"]["features_skipped"]
     assert "height_diff" in results["config"]["features_skipped"]
     assert "reach_diff" not in results["config"]["features_numeric"]
+
+
+def test_numeric_feature_validation_coerces_numeric_strings():
+    df = pd.DataFrame({"elo_diff": ["10.5", "-3", None]})
+    out = coerce_numeric_features(df, ["elo_diff"], context="unit")
+    assert out["elo_diff"].tolist()[:2] == [10.5, -3.0]
+    assert pd.isna(out.loc[2, "elo_diff"])
+
+
+def test_numeric_feature_validation_rejects_bad_values():
+    df = pd.DataFrame({"elo_diff": ["10.5", "not-a-number", None]})
+    with pytest.raises(ValueError, match=r"\[unit\] non-numeric"):
+        coerce_numeric_features(df, ["elo_diff"], context="unit")
+
+
+def test_numeric_feature_validation_rejects_infinite_values():
+    df = pd.DataFrame({"elo_diff": [10.5, float("inf")]})
+    with pytest.raises(ValueError, match=r"\[unit\] non-numeric"):
+        coerce_numeric_features(df, ["elo_diff"], context="unit")

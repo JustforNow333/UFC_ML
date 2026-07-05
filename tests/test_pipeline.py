@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ufc_pipeline.adapters.mdabbert import adapt, _adapt_winner_loser  # noqa: E402
-from ufc_pipeline.columns import build_column_mapping  # noqa: E402
+from ufc_pipeline.columns import build_column_mapping, clean_display_name  # noqa: E402
 from ufc_pipeline.elo import expected_score, run_elo  # noqa: E402
 from ufc_pipeline.export import export_baseline, find_forbidden_columns  # noqa: E402
 from ufc_pipeline.ingest import ingest_csv  # noqa: E402
@@ -251,6 +251,10 @@ def test_missing_columns_raise_clear_error():
     msg = str(err.value)
     assert "Missing normalized fields" in msg
     assert "foo" in msg  # shows the columns that were found
+
+
+def test_nullable_missing_names_clean_to_empty_string():
+    assert clean_display_name(pd.NA) == ""
 
 
 def test_draws_and_bad_rows_dropped(tmp_path):

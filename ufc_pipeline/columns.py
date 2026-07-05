@@ -100,8 +100,13 @@ def clean_display_name(name: str) -> str:
     Deliberately conservative: we do NOT lowercase, strip accents, or drop
     punctuation here, because that risks merging genuinely different fighters.
     """
-    if name is None or (isinstance(name, float) and pd.isna(name)):
+    if name is None:
         return ""
+    try:
+        if pd.isna(name):
+            return ""
+    except (TypeError, ValueError):
+        pass
     return re.sub(r"\s+", " ", str(name)).strip()
 
 

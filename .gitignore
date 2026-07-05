@@ -1,6 +1,35 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Local SQLite/runtime data
 data/ufc.db
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite-*
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Generated model artifacts and pipeline outputs
 data/models/
 *.joblib
+data/processed/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

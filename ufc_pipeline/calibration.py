@@ -46,6 +46,7 @@ from ufc_pipeline.modeling import (
     STEP3B_MODEL_FEATURES,
     TARGET,
     check_features_allowed,
+    coerce_numeric_features,
     evaluate_probs,
     make_logistic_pipeline,
     select_features,
@@ -312,6 +313,8 @@ def run_calibration(
     calibration_end_date: str | None = None,
     numeric_features: list[str] | None = None,
     include_step3_basic: bool = True,
+    output_prefix: str = "",
+    model_stem: str = "step3b_logistic_regression",
 ) -> dict:
     """Full calibration workflow. Returns the results dict (also written to JSON).
 
@@ -350,6 +353,14 @@ def run_calibration(
     if not numeric:
         raise ValueError("No usable numeric features found in the input CSV.")
     check_features_allowed(numeric + categorical)  # hard stop BEFORE training
+    df = coerce_numeric_features(df, numeric, context="calibration")
+    train, calib, test = chronological_three_way_split(
+        df,
+        train_frac=train_frac,
+        calibration_frac=calibration_frac,
+        train_end_date=train_end_date,
+        calibration_end_date=calibration_end_date,
+    )
     if skipped:
         print(f"Features requested but unusable (skipped): {skipped}")
 
@@ -392,6 +403,11 @@ def run_calibration(
             "platt_input": "logit(p) of base-model probability",
             "platt_coefficients": platt.coefficients,
             "random_state": RANDOM_STATE,
+            "base_model_label": (
+                "Step 3C LR" if model_stem.startswith("step3c")
+                else "Step 3B LR" if model_stem.startswith("step3b")
+                else model_stem
+            ),
         },
         "elo_baseline": _evaluate_calibrated(
             y_test, test["fighter_a_expected_win_prob"].to_numpy(dtype=float)
@@ -410,10 +426,18 @@ def run_calibration(
         )
         if b_num:
             check_features_allowed(b_num + b_cat)
+            df_basic = coerce_numeric_features(df, b_num, context="step3_basic_calibration")
+            basic_train, _, basic_test = chronological_three_way_split(
+                df_basic,
+                train_frac=train_frac,
+                calibration_frac=calibration_frac,
+                train_end_date=train_end_date,
+                calibration_end_date=calibration_end_date,
+            )
             basic = make_logistic_pipeline(b_num, b_cat)
-            basic.fit(train[b_num + b_cat], y_train)
+            basic.fit(basic_train[b_num + b_cat], y_train)
             results["step3_basic_uncalibrated"] = _evaluate_calibrated(
-                y_test, basic.predict_proba(test[b_num + b_cat])[:, 1]
+                y_test, basic.predict_proba(basic_test[b_num + b_cat])[:, 1]
             )
 
     results["verdict"] = choose_best_method(results, n_calibration=len(calib))
@@ -423,11 +447,11 @@ def run_calibration(
     out_dir.mkdir(parents=True, exist_ok=True)
     mdl_dir.mkdir(parents=True, exist_ok=True)
 
-    joblib.dump(base, mdl_dir / "step3b_logistic_regression_uncalibrated.joblib")
+    joblib.dump(base, mdl_dir / f"{model_stem}_uncalibrated.joblib")
     joblib.dump(CalibratedPipeline(base, platt),
-                mdl_dir / "step3b_logistic_regression_platt_calibrated.joblib")
+                mdl_dir / f"{model_stem}_platt_calibrated.joblib")
     joblib.dump(CalibratedPipeline(base, iso),
-                mdl_dir / "step3b_logistic_regression_isotonic_calibrated.joblib")
+                mdl_dir / f"{model_stem}_isotonic_calibrated.joblib")
 
     # Predictions: TEST rows only, so downstream analysis can't accidentally
     # average in-sample calibration-window rows into the reported metrics.
@@ -441,16 +465,18 @@ def run_calibration(
             pred_df[f"{name}_probability"] >= 0.5
         ).astype(int)
     pred_df["split"] = "test"
-    pred_df.to_csv(out_dir / "calibration_predictions.csv", index=False)
+    pred_df.to_csv(out_dir / f"{output_prefix}calibration_predictions.csv", index=False)
 
     # Long-format bucket tables for all three probability sets.
     table_rows = []
     for name, entry in results["models"].items():
         for b in entry["calibration"]:
             table_rows.append({"model": name, **b})
-    pd.DataFrame(table_rows).to_csv(out_dir / "calibration_tables.csv", index=False)
+    pd.DataFrame(table_rows).to_csv(
+        out_dir / f"{output_prefix}calibration_tables.csv", index=False
+    )
 
-    with open(out_dir / "calibration_comparison.json", "w") as fh:
+    with open(out_dir / f"{output_prefix}calibration_comparison.json", "w") as fh:
         json.dump(results, fh, indent=2)
 
     print_calibration_report(results)
@@ -542,6 +568,9 @@ def run_live_calibration(
     if not numeric:
         raise ValueError("No usable numeric features found in the input CSV.")
     check_features_allowed(numeric + categorical)
+    df = coerce_numeric_features(df, numeric, context="live_calibration")
+    train = df[df["date"] < calibration_start]
+    calib = df[df["date"] >= calibration_start]
     cols = numeric + categorical
 
     print(
@@ -659,14 +688,17 @@ def print_live_report(report: dict) -> None:
 # Terminal report
 # ---------------------------------------------------------------------------
 
-_MODEL_LABELS = {
-    "uncalibrated": "Step 3B LR (uncalibrated)",
-    "platt": "Step 3B LR + Platt",
-    "isotonic": "Step 3B LR + isotonic",
-}
+def _model_labels(results: dict) -> dict:
+    base = results.get("config", {}).get("base_model_label", "Step 3B LR")
+    return {
+        "uncalibrated": f"{base} (uncalibrated)",
+        "platt": f"{base} + Platt",
+        "isotonic": f"{base} + isotonic",
+    }
 
 
 def print_calibration_report(results: dict) -> None:
+    _MODEL_LABELS = _model_labels(results)
     def fmt(m):
         auc = f"{m['roc_auc']:.4f}" if m["roc_auc"] is not None else "  n/a "
         return (f"{m['accuracy']:>8.4f} {m['log_loss']:>9.4f} "

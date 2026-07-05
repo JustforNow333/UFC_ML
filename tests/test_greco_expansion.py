@@ -97,23 +97,27 @@ def test_convert_greco_fights_outcomes():
     events = pd.DataFrame({"EVENT": ["UFC 9"], "DATE": ["May 17, 1996"],
                            "URL": ["u"], "LOCATION": ["x"]})
     results = pd.DataFrame({
-        "EVENT": ["UFC 9 "] * 4,
+        "EVENT": ["UFC 9 "] * 5,
         "BOUT": ["Ann Ito vs. Bo Rex", "Cy Dax vs. Dee Oz",
-                 "Eli Fox vs. Gia Ho", "Hal Ip vs. Ida Jo"],
-        "OUTCOME": ["W/L", "L/W", "D/D", "NC/NC"],
-        "WEIGHTCLASS": ["Lightweight Bout"] * 4,
-        "METHOD": ["KO/TKO "] * 4, "ROUND": [1] * 4, "TIME": ["2:00"] * 4,
-        "TIME FORMAT": ["3 Rnd (5-5-5)"] * 4, "REFEREE": ["r"] * 4,
-        "DETAILS": [""] * 4, "URL": ["u"] * 4,
+                 "Eli Fox vs. Gia Ho", "Hal Ip vs. Ida Jo",
+                 "Kay Lu vs. Mo Ny"],
+        "OUTCOME": ["W/L", "L/W", "D/D", "NC/NC", pd.NA],
+        "WEIGHTCLASS": ["Lightweight Bout"] * 5,
+        "METHOD": ["KO/TKO "] * 4 + [pd.NA], "ROUND": [1] * 5,
+        "TIME": ["2:00"] * 5,
+        "TIME FORMAT": ["3 Rnd (5-5-5)"] * 5, "REFEREE": ["r"] * 5,
+        "DETAILS": [""] * 5, "URL": ["u"] * 5,
     })
     out = convert_greco_fights(results, events)
-    assert len(out) == 4
+    assert len(out) == 5
     assert out.loc[0, "winner"] == "Ann Ito"   # W/L -> red (first-listed)
     assert out.loc[1, "winner"] == "Dee Oz"    # L/W -> blue
     assert out.loc[2, "winner"] == ""          # draw -> no winner
     assert out.loc[3, "winner"] == ""          # NC -> no winner
+    assert out.loc[4, "winner"] == ""          # missing outcome -> no winner
     assert (out["date"] == "1996-05-17").all()
     assert out.loc[0, "method"] == "KO/TKO"    # trailing space stripped
+    assert pd.isna(out.loc[4, "method"])
 
 
 def test_coalesce_prefers_per_fight_over_static(greco_style_db, tmp_path):

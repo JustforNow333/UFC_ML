@@ -538,6 +538,95 @@ draws/no-contests deliberately excluded from the fights table plus a
 handful of fighters absent from the DB (0% effective unmatched rate on
 modelable fights; the ingestion report now itemizes every reason).
 
+## Style-matchup features (Step 3C)
+
+Step 3B gave each fighter individual rolling rates; Step 3C adds what those
+rates say about the **pairing**: does A's striking output exceed what B
+historically absorbs, does A's wrestling meet a B who historically cannot
+stop takedowns, does A's reach advantage coincide with the striking volume
+to use it. Built by `ufc_pipeline/matchup_features.py` with the exact
+record-before-update loop of Step 3B (snapshot both fighters' past stats →
+emit the row → only then fold in the current fight), so current-fight stats
+can never appear in their own row and future fights never affect earlier
+rows (both covered by tests).
+
+**Direction convention (every matchup feature): positive = fighter A
+advantage.**
+
+**New rolling "against" stats** (per fighter + A−B diffs; derived from
+opponents' offensive rows already stored in `fight_stats` — nothing was
+invented, so no proposed feature had to be skipped for missing data):
+`takedowns_allowed_per_15`, `opp_takedown_attempts_per_15`,
+`opp_sig_str_attempted_per_min`, `control_time_absorbed_per_15`,
+`knockdowns_absorbed_per_15`, `submission_attempts_absorbed_per_15`.
+
+**Matchup features (exact formulas; `a_`/`b_` are pre-fight rolling values):**
+
+| feature | formula |
+|---|---|
+| `striking_matchup_net_advantage` | `(a_sig_landed_pm − b_sig_absorbed_pm) − (b_sig_landed_pm − a_sig_absorbed_pm)` |
+| `striking_accuracy_matchup_net_advantage` | `(a_strike_acc − b_strike_def) − (b_strike_acc − a_strike_def)` |
+| `takedown_matchup_net_advantage` | `(a_td_per15 − b_td_allowed_per15) − (b_td_per15 − a_td_allowed_per15)` |
+| `takedown_accuracy_matchup_net_advantage` | `(a_td_acc − b_td_def) − (b_td_acc − a_td_def)` |
+| `control_matchup_net_advantage` | `(a_ctrl_per15 − b_ctrl_absorbed_per15) − (b_ctrl_per15 − a_ctrl_absorbed_per15)` |
+| `knockdown_matchup_net_advantage` | `(a_kd_rate − b_kd_absorbed_per15) − (b_kd_rate − a_kd_absorbed_per15)` |
+| `submission_matchup_net_advantage` | `(a_sub_per15 − b_sub_absorbed_per15) − (b_sub_per15 − a_sub_absorbed_per15)` |
+| `reach_volume_interaction` | `reach_diff × (a_sig_landed_pm + b_sig_landed_pm) / 2` |
+| `pace_pressure_advantage` | `(a_sig_landed_pm + a_td_per15) − (b_sig_landed_pm + b_td_per15)` |
+| `opponent_pressure_absorption_advantage` | `(b_sig_absorbed_pm + b_td_allowed_per15) − (a_sig_absorbed_pm + a_td_allowed_per15)` |
+
+Two documented honesty notes: (1) each `*_matchup_net_advantage` expands
+algebraically to `(aX + aY) − (bX + bY)`; where both underlying diffs
+already exist in 3B (striking) the net adds interpretability but no new
+information to a *linear* model — where one side is a new against-stat
+(takedown/control/knockdown/submission) it carries genuinely new signal;
+`reach_volume_interaction` is a true product interaction. (2) The naive
+`reach_diff × volume_diff` product was rejected because it breaks the
+direction rule (a shorter AND less active fighter A would score positive).
+**Style archetype scores were deliberately skipped** in this version:
+honest era-relative "striker-ness" needs time-safe expanding-window
+normalization — real complexity for unproven payoff.
+
+**Missing history:** identical policy to 3B — nulls, never silent zeros;
+any matchup feature with a null input is null; the new
+`matchup_history_missing` flag is 1 when *either* fighter lacks stat
+history (the per-side flags can't express "either"). Coverage on real data:
+against-stats ~74–90% per side, matchup nets ~74%
+(`takedown_accuracy_matchup_net` 55% — needs TD attempts on both sides),
+flag 100%. Nulls are median-imputed inside the model pipeline from
+training-split data.
+
+**Commands** (versioned outputs; Step 3B files are never overwritten):
+
+```bash
+python scripts/build_prefight_features_step3c.py --db data/ufc.db \
+    --output data/processed/ufc_prefight_features_step3c.csv
+#   optional: --debug-fighters "Max Holloway"
+python scripts/compare_models.py --input data/processed/ufc_prefight_features_step3c.csv \
+    --metrics-output data/processed/model_comparison_step3c.json \
+    --predictions-output data/processed/model_comparison_step3c_predictions.csv
+python scripts/calibrate_model.py --input data/processed/ufc_prefight_features_step3c.csv \
+    --output-dir data/processed --model-dir data/models --feature-set step3c
+```
+
+**Results (same official 70/15/15 benchmark split; test = 1,282 fights,
+2023-11 → 2026-05):**
+
+| model | log loss | Brier | AUC | acc |
+|---|---|---|---|---|
+| Step 3B LR + Platt (old official) | 0.6449 | 0.2271 | 0.6712 | 0.6186 |
+| **Step 3C LR + Platt (new official)** | **0.6442** | **0.2267** | **0.6760** | 0.6193 |
+
+Step 3C + Platt improves every headline metric: calibrated log loss
+−0.0007 (marginal), Brier −0.0004, AUC +0.0048 (the most substantive gain),
+and the above-0.7 calibration gap halves (−0.053 → −0.029). Honest caveats:
+the log-loss edge is small, and on the separate 80/20 comparison split the
+*uncalibrated* 3C model was a wash vs 3B (0.6569 vs 0.6567) — the gains are
+real but modest, not a breakthrough. The leakage guard was also
+strengthened in this step: the raw `fight_stats` column names
+(`td_landed`, `ctrl_seconds`, `knockdowns`, `sub_attempts`) are now
+explicitly forbidden as model inputs alongside the existing patterns.
+
 ## Probability calibration (Step 4B)
 
 The Step 3B comparison exposed one clear weakness: the best model was

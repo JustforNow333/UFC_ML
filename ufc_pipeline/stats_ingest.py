@@ -422,7 +422,7 @@ def convert_greco_fights(results: pd.DataFrame, events: pd.DataFrame) -> pd.Data
         if len(fighters) != 2 or event not in event_date:
             continue
         red, blue = (clean_display_name(f) for f in fighters)
-        outcome = str(res.get("outcome") or "").strip().upper()
+        outcome = _text(res.get("outcome")).upper()
         winner = red if outcome == "W/L" else blue if outcome == "L/W" else ""
         rows.append(
             {
@@ -432,7 +432,7 @@ def convert_greco_fights(results: pd.DataFrame, events: pd.DataFrame) -> pd.Data
                 "blue_fighter": blue,
                 "winner": winner,
                 "weight_class": normalize_weight_class(res.get("weightclass")),
-                "method": str(res.get("method") or "").strip() or None,
+                "method": _text(res.get("method")) or None,
                 "round": res.get("round"),
             }
         )

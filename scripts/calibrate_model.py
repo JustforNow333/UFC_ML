@@ -31,6 +31,28 @@ from ufc_pipeline.calibration import (
     run_calibration,
     run_live_calibration,
 )
+from ufc_pipeline.modeling import (
+    DEFAULT_NUMERIC_FEATURES,
+    STEP3B_MODEL_FEATURES,
+    STEP3C_MODEL_FEATURES,
+)
+
+# Base-model feature sets. step3c outputs use step3c_-prefixed file names so
+# the official Step 3B benchmark outputs are never overwritten.
+FEATURE_SETS = {
+    "step3b": {
+        "numeric": None,  # calibration default: Step 3 + Step 3B
+        "output_prefix": "",
+        "model_stem": "step3b_logistic_regression",
+    },
+    "step3c": {
+        "numeric": list(DEFAULT_NUMERIC_FEATURES)
+        + list(STEP3B_MODEL_FEATURES)
+        + list(STEP3C_MODEL_FEATURES),
+        "output_prefix": "step3c_",
+        "model_stem": "step3c_logistic_regression",
+    },
+}
 
 
 def main() -> None:
@@ -41,6 +63,10 @@ def main() -> None:
     p.add_argument("--mode", choices=["backtest", "live"], default="backtest",
                    help="backtest = honest held-out evaluation (default); "
                         "live = rolling recent-window refit for future predictions")
+    p.add_argument("--feature-set", choices=sorted(FEATURE_SETS), default="step3b",
+                   help="base-model features: step3b (official benchmark) or "
+                        "step3c (adds style-matchup features; needs the "
+                        "step3c input CSV; writes step3c_-prefixed outputs)")
     # backtest-mode options
     p.add_argument("--train-frac", type=float, default=0.70,
                    help="[backtest] chronological fraction for the train window")
@@ -67,8 +93,14 @@ def main() -> None:
     p.add_argument("--method", choices=["platt", "isotonic"], default="platt",
                    help="[live] calibration method (default platt)")
     args = p.parse_args()
+    spec = FEATURE_SETS[args.feature_set]
 
     if args.mode == "live":
+        if args.feature_set != "step3b":
+            raise SystemExit(
+                "--mode live currently supports only the official step3b "
+                "feature set; promote step3c first if it wins the backtest."
+            )
         run_live_calibration(
             input_csv=args.input,
             output_dir=args.output_dir,
@@ -87,7 +119,10 @@ def main() -> None:
             calibration_frac=args.calibration_frac,
             train_end_date=args.train_end_date,
             calibration_end_date=args.calibration_end_date,
+            numeric_features=spec["numeric"],
             include_step3_basic=not args.no_step3_basic,
+            output_prefix=spec["output_prefix"],
+            model_stem=spec["model_stem"],
         )
 
 

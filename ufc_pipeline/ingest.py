@@ -16,7 +16,7 @@ from .adapters import get_adapter
 from .columns import name_key
 from .dates import to_datetime_mixed
 from .db import connect, init_schema
-from .identity import load_identities_by_name, plan_identity_assignments
+from .identity import GRECO_SOURCE, load_identities_by_name, plan_identity_assignments
 
 
 @dataclass
@@ -118,6 +118,7 @@ def _get_or_create_fighter(
     display_name: str,
     slug: str | None = None,
     report: IngestReport | None = None,
+    identity_source: str = GRECO_SOURCE,
 ) -> int:
     """Resolve a bout-fighter slot to a canonical fighter_id.
 
@@ -132,15 +133,16 @@ def _get_or_create_fighter(
     identity, so unresolved bouts never silently land on a split fighter.
     """
     if slug is not None:
-        if ("slug", slug) in cache:
-            return cache[("slug", slug)]
+        slug_key = ("slug", identity_source, slug)
+        if slug_key in cache:
+            return cache[slug_key]
         row = conn.execute(
             "SELECT fighter_id FROM fighter_source_ids "
-            "WHERE source_fighter_id = ? AND fighter_id IS NOT NULL",
-            (slug,),
+            "WHERE source = ? AND source_fighter_id = ? AND fighter_id IS NOT NULL",
+            (identity_source, slug),
         ).fetchone()
         if row is not None:
-            cache[("slug", slug)] = row[0]
+            cache[slug_key] = row[0]
             return row[0]
         key = name_key(display_name)
         unclaimed = conn.execute(
@@ -164,12 +166,12 @@ def _get_or_create_fighter(
                    resolution_note = COALESCE(resolution_note, '') ||
                                      ' [linked at ingestion]',
                    updated_at = datetime('now')
-               WHERE source_fighter_id = ?""",
-            (fid, slug),
+               WHERE source = ? AND source_fighter_id = ?""",
+            (fid, identity_source, slug),
         )
         if report is not None:
             report.identity_new_links += 1
-        cache[("slug", slug)] = fid
+        cache[slug_key] = fid
         return fid
 
     key = name_key(display_name)

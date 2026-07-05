@@ -409,11 +409,20 @@ def test_url_slug_and_division_weight():
     assert url_slug("http://ufcstats.com/fighter-details/93fe7332d16c6ad9") \
         == "93fe7332d16c6ad9"
     assert url_slug("http://ufcstats.com/fighter-details/abc/") == "abc"
-    assert url_slug(None) is None and url_slug("") is None
+    assert url_slug(None) is None and url_slug("") is None and url_slug(pd.NA) is None
     assert division_weight_lbs("Flyweight") == 125.0
     assert division_weight_lbs("Women's Flyweight") == 125.0
     assert division_weight_lbs("Catch Weight") is None
-    assert division_weight_lbs(None) is None
+    assert division_weight_lbs(None) is None and division_weight_lbs(pd.NA) is None
+
+
+def test_identity_loader_skips_nullable_missing_urls(tmp_path):
+    tott = make_tott_csv(tmp_path / "tott.csv", [
+        {"FIGHTER": "Missing Url", "URL": pd.NA},
+        {"FIGHTER": "Good Url", "URL": URL + "good1"},
+    ])
+    identities = load_greco_identities(str(tott))
+    assert [i.slug for i in identities] == ["good1"]
 
 
 def test_continuity_evidence_resolves_one_off_division_move():
