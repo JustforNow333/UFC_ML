@@ -1,0 +1,17 @@
+feature,importance
+prior_win_pct_diff,0.12203994251502415
+height_diff,0.1131349020070027
+elo_diff,0.10875586954649034
+days_since_last_fight_diff,0.08685095710637741
+reach_diff,0.08382209289679231
+age_diff,0.07711499199692538
+prior_fights_diff,0.07095559069668256
+prior_losses_diff,0.06972186422570835
+prior_wins_diff,0.06040436037446783
+win_pct_last_5_diff,0.05500479072320878
+wins_last_5_diff,0.038721265666555184
+win_pct_last_3_diff,0.03774396122930871
+wins_last_3_diff,0.02941972170975833
+weight_class_Lightweight,0.015820761430082667
+weight_class_Middleweight,0.015434100043283409
+weight_class_Welterweight,0.015054827832331995

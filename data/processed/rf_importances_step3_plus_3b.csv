@@ -1,0 +1,42 @@
+feature,importance
+age_diff,0.10482705311927766
+elo_diff,0.062461625116250405
+reach_diff,0.05423854634034287
+height_diff,0.0533975053155797
+sig_strike_differential_diff,0.04218649902248726
+sig_strikes_absorbed_per_min_diff,0.04154458889220397
+striking_defense_diff,0.04111440758794381
+sig_strikes_landed_per_min_diff,0.038200361079036835
+days_since_last_fight_diff,0.038125036976073355
+takedowns_per_15_diff,0.03775588434958946
+control_time_per_15_diff,0.03689861660848263
+prior_fights_diff,0.03674865794670981
+striking_accuracy_diff,0.03609929679879787
+submission_attempts_per_15_diff,0.03525911366214527
+prior_losses_diff,0.03482941173462184
+takedown_defense_diff,0.03464329007033712
+takedown_accuracy_diff,0.032881188337026294
+knockdown_rate_diff,0.03248722285839897
+prior_win_pct_diff,0.0288528873686725
+prior_wins_diff,0.027326185777242912
+win_pct_last_5_diff,0.02067714850146493
+wins_last_5_diff,0.020335335869443305
+wins_last_3_diff,0.016106850054700656
+win_pct_last_3_diff,0.013498942415818841
+weight_class_Lightweight,0.008621339892854062
+weight_class_Welterweight,0.00850050108557992
+weight_class_Featherweight,0.008074119867253319
+weight_class_Bantamweight,0.007746665391133373
+weight_class_Middleweight,0.0074337263566733045
+weight_class_Light Heavyweight,0.006187218648975404
+weight_class_Heavyweight,0.006181346981302245
+weight_class_Women's Strawweight,0.00505686659742882
+weight_class_Flyweight,0.005020398077478498
+weight_class_Women's Bantamweight,0.00412763523992911
+weight_class_Women's Flyweight,0.004017092614902555
+fighter_b_no_prior_stats,0.0023502851470804066
+weight_class_Open Weight,0.0021994090453395553
+fighter_a_no_prior_stats,0.002166659377009847
+weight_class_Catch Weight,0.0009025449926446193
+weight_class_Women's Featherweight,0.0008929138340495032
+weight_class_Super Heavyweight,2.5621047717299846e-05

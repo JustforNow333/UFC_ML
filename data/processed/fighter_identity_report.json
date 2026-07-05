@@ -1,0 +1,110 @@
+{
+  "total_identities": 4496,
+  "already_linked": 2677,
+  "newly_linked_by_name": 0,
+  "unlinked_not_in_db": 1812,
+  "ambiguous_same_name": 7,
+  "duplicate_normalized_names": [
+    "bruno silva",
+    "jean silva",
+    "joey gomez",
+    "michael mcdonald",
+    "mike davis",
+    "tony johnson",
+    "victor valenzuela"
+  ],
+  "same_name_not_merged": [
+    {
+      "normalized_name": "mike davis",
+      "identities": [
+        {
+          "slug": "c8661e204c66f325",
+          "weight_lbs": null,
+          "dob": null
+        },
+        {
+          "slug": "fb3e61720be4690c",
+          "weight_lbs": 155.0,
+          "dob": "1992-10-07"
+        }
+      ]
+    },
+    {
+      "normalized_name": "joey gomez",
+      "identities": [
+        {
+          "slug": "0778f94eb5d588a5",
+          "weight_lbs": 135.0,
+          "dob": "1986-07-21"
+        },
+        {
+          "slug": "3a28e1e641366308",
+          "weight_lbs": 155.0,
+          "dob": "1989-08-29"
+        }
+      ]
+    },
+    {
+      "normalized_name": "tony johnson",
+      "identities": [
+        {
+          "slug": "3641a0d117e9bc6c",
+          "weight_lbs": 205.0,
+          "dob": "1983-05-02"
+        },
+        {
+          "slug": "a45bab49951a45cd",
+          "weight_lbs": 265.0,
+          "dob": null
+        }
+      ]
+    },
+    {
+      "normalized_name": "michael mcdonald",
+      "identities": [
+        {
+          "slug": "d52ef694108f8235",
+          "weight_lbs": 205.0,
+          "dob": "1965-02-06"
+        },
+        {
+          "slug": "d0314416a7f26527",
+          "weight_lbs": 135.0,
+          "dob": "1991-01-15"
+        }
+      ]
+    },
+    {
+      "normalized_name": "jean silva",
+      "identities": [
+        {
+          "slug": "9211aae062b799d6",
+          "weight_lbs": 160.0,
+          "dob": "1977-10-08"
+        },
+        {
+          "slug": "52ef95b5860fb28c",
+          "weight_lbs": 145.0,
+          "dob": "1996-12-27"
+        }
+      ]
+    },
+    {
+      "normalized_name": "victor valenzuela",
+      "identities": [
+        {
+          "slug": "de277a4abcfeea46",
+          "weight_lbs": 155.0,
+          "dob": null
+        },
+        {
+          "slug": "078695e385ec2f57",
+          "weight_lbs": 170.0,
+          "dob": "1994-02-09"
+        }
+      ]
+    }
+  ],
+  "linked_examples": [],
+  "unresolved_examples": []
+}

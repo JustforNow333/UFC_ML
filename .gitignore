@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+data/ufc.db
+data/models/
+*.joblib

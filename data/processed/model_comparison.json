@@ -1,0 +1,427 @@
+{
+  "config": {
+    "input": "data/processed/ufc_prefight_features_step3b.csv",
+    "split_date": null,
+    "test_size": 0.2,
+    "n_train": 6838,
+    "n_test": 1709,
+    "rows_dropped": 0,
+    "random_state": 42
+  },
+  "elo_baseline": {
+    "n": 1709,
+    "accuracy": 0.5523698069046226,
+    "log_loss": 0.6838985125315221,
+    "brier_score": 0.24542821985054522,
+    "avg_predicted_prob": 0.5180458298469209,
+    "actual_win_rate": 0.5570509069631363,
+    "calibration": [
+      {
+        "bucket": "0.0-0.1",
+        "n_predictions": 0,
+        "avg_predicted_prob": null,
+        "actual_win_rate": null
+      },
+      {
+        "bucket": "0.1-0.2",
+        "n_predictions": 0,
+        "avg_predicted_prob": null,
+        "actual_win_rate": null
+      },
+      {
+        "bucket": "0.2-0.3",
+        "n_predictions": 0,
+        "avg_predicted_prob": null,
+        "actual_win_rate": null
+      },
+      {
+        "bucket": "0.3-0.4",
+        "n_predictions": 14,
+        "avg_predicted_prob": 0.3812545955850458,
+        "actual_win_rate": 0.35714285714285715
+      },
+      {
+        "bucket": "0.4-0.5",
+        "n_predictions": 548,
+        "avg_predicted_prob": 0.46970947550875874,
+        "actual_win_rate": 0.5109489051094891
+      },
+      {
+        "bucket": "0.5-0.6",
+        "n_predictions": 1060,
+        "avg_predicted_prob": 0.5358481227573569,
+        "actual_win_rate": 0.5773584905660377
+      },
+      {
+        "bucket": "0.6-0.7",
+        "n_predictions": 86,
+        "avg_predicted_prob": 0.6265492679039588,
+        "actual_win_rate": 0.627906976744186
+      },
+      {
+        "bucket": "0.7-0.8",
+        "n_predictions": 1,
+        "avg_predicted_prob": 0.7197191288585616,
+        "actual_win_rate": 1.0
+      },
+      {
+        "bucket": "0.8-0.9",
+        "n_predictions": 0,
+        "avg_predicted_prob": null,
+        "actual_win_rate": null
+      },
+      {
+        "bucket": "0.9-1.0",
+        "n_predictions": 0,
+        "avg_predicted_prob": null,
+        "actual_win_rate": null
+      }
+    ],
+    "roc_auc": 0.5598052629241921
+  },
+  "models": {
+    "step3_basic": {
+      "features_numeric": [
+        "elo_diff",
+        "age_diff",
+        "height_diff",
+        "reach_diff",
+        "prior_fights_diff",
+        "prior_wins_diff",
+        "prior_losses_diff",
+        "prior_win_pct_diff",
+        "wins_last_3_diff",
+        "win_pct_last_3_diff",
+        "wins_last_5_diff",
+        "win_pct_last_5_diff",
+        "days_since_last_fight_diff"
+      ],
+      "features_categorical": [
+        "weight_class"
+      ],
+      "features_skipped": [],
+      "logistic_regression": {
+        "n": 1709,
+        "accuracy": 0.6038619075482738,
+        "log_loss": 0.6616673582293457,
+        "brier_score": 0.23488707637798384,
+        "avg_predicted_prob": 0.6342725253368275,
+        "actual_win_rate": 0.5570509069631363,
+        "calibration": [
+          {
+            "bucket": "0.0-0.1",
+            "n_predictions": 0,
+            "avg_predicted_prob": null,
+            "actual_win_rate": null
+          },
+          {
+            "bucket": "0.1-0.2",
+            "n_predictions": 2,
+            "avg_predicted_prob": 0.1899157667053035,
+            "actual_win_rate": 0.0
+          },
+          {
+            "bucket": "0.2-0.3",
+            "n_predictions": 13,
+            "avg_predicted_prob": 0.2690247134877045,
+            "actual_win_rate": 0.23076923076923078
+          },
+          {
+            "bucket": "0.3-0.4",
+            "n_predictions": 61,
+            "avg_predicted_prob": 0.36341124424920673,
+            "actual_win_rate": 0.29508196721311475
+          },
+          {
+            "bucket": "0.4-0.5",
+            "n_predictions": 166,
+            "avg_predicted_prob": 0.44982268191553537,
+            "actual_win_rate": 0.3614457831325301
+          },
+          {
+            "bucket": "0.5-0.6",
+            "n_predictions": 360,
+            "avg_predicted_prob": 0.5552942545498106,
+            "actual_win_rate": 0.49166666666666664
+          },
+          {
+            "bucket": "0.6-0.7",
+            "n_predictions": 543,
+            "avg_predicted_prob": 0.6495019816570382,
+            "actual_win_rate": 0.5322283609576427
+          },
+          {
+            "bucket": "0.7-0.8",
+            "n_predictions": 436,
+            "avg_predicted_prob": 0.74313245855498,
+            "actual_win_rate": 0.694954128440367
+          },
+          {
+            "bucket": "0.8-0.9",
+            "n_predictions": 127,
+            "avg_predicted_prob": 0.8327799418448057,
+            "actual_win_rate": 0.7952755905511811
+          },
+          {
+            "bucket": "0.9-1.0",
+            "n_predictions": 1,
+            "avg_predicted_prob": 0.9016296727418037,
+            "actual_win_rate": 1.0
+          }
+        ],
+        "roc_auc": 0.6568969727917587
+      },
+      "coefficients_csv": "data/processed/coefficients_step3_basic.csv",
+      "random_forest": {
+        "n": 1709,
+        "accuracy": 0.6015213575190169,
+        "log_loss": 0.7188944977702308,
+        "brier_score": 0.24138976009362204,
+        "avg_predicted_prob": 0.6154924907353228,
+        "actual_win_rate": 0.5570509069631363,
+        "calibration": [
+          {
+            "bucket": "0.0-0.1",
+            "n_predictions": 0,
+            "avg_predicted_prob": null,
+            "actual_win_rate": null
+          },
+          {
+            "bucket": "0.1-0.2",
+            "n_predictions": 1,
+            "avg_predicted_prob": 0.19,
+            "actual_win_rate": 0.0
+          },
+          {
+            "bucket": "0.2-0.3",
+            "n_predictions": 21,
+            "avg_predicted_prob": 0.2652380952380953,
+            "actual_win_rate": 0.2857142857142857
+          },
+          {
+            "bucket": "0.3-0.4",
+            "n_predictions": 90,
+            "avg_predicted_prob": 0.36096296296296293,
+            "actual_win_rate": 0.34444444444444444
+          },
+          {
+            "bucket": "0.4-0.5",
+            "n_predictions": 228,
+            "avg_predicted_prob": 0.4537134502923977,
+            "actual_win_rate": 0.4166666666666667
+          },
+          {
+            "bucket": "0.5-0.6",
+            "n_predictions": 425,
+            "avg_predicted_prob": 0.5538117647058823,
+            "actual_win_rate": 0.5152941176470588
+          },
+          {
+            "bucket": "0.6-0.7",
+            "n_predictions": 457,
+            "avg_predicted_prob": 0.653931436907367,
+            "actual_win_rate": 0.6236323851203501
+          },
+          {
+            "bucket": "0.7-0.8",
+            "n_predictions": 352,
+            "avg_predicted_prob": 0.7412310606060605,
+            "actual_win_rate": 0.6448863636363636
+          },
+          {
+            "bucket": "0.8-0.9",
+            "n_predictions": 113,
+            "avg_predicted_prob": 0.8345427728613569,
+            "actual_win_rate": 0.6460176991150443
+          },
+          {
+            "bucket": "0.9-1.0",
+            "n_predictions": 22,
+            "avg_predicted_prob": 0.9431818181818182,
+            "actual_win_rate": 0.7272727272727273
+          }
+        ],
+        "roc_auc": 0.6151743392204967
+      },
+      "rf_importances_csv": "data/processed/rf_importances_step3_basic.csv"
+    },
+    "step3_plus_3b": {
+      "features_numeric": [
+        "elo_diff",
+        "age_diff",
+        "height_diff",
+        "reach_diff",
+        "prior_fights_diff",
+        "prior_wins_diff",
+        "prior_losses_diff",
+        "prior_win_pct_diff",
+        "wins_last_3_diff",
+        "win_pct_last_3_diff",
+        "wins_last_5_diff",
+        "win_pct_last_5_diff",
+        "days_since_last_fight_diff",
+        "sig_strikes_landed_per_min_diff",
+        "sig_strikes_absorbed_per_min_diff",
+        "sig_strike_differential_diff",
+        "striking_accuracy_diff",
+        "striking_defense_diff",
+        "knockdown_rate_diff",
+        "takedowns_per_15_diff",
+        "takedown_accuracy_diff",
+        "takedown_defense_diff",
+        "control_time_per_15_diff",
+        "submission_attempts_per_15_diff",
+        "fighter_a_no_prior_stats",
+        "fighter_b_no_prior_stats"
+      ],
+      "features_categorical": [
+        "weight_class"
+      ],
+      "features_skipped": [],
+      "logistic_regression": {
+        "n": 1709,
+        "accuracy": 0.609713282621416,
+        "log_loss": 0.656696181011195,
+        "brier_score": 0.2326124634705655,
+        "avg_predicted_prob": 0.6282165901788384,
+        "actual_win_rate": 0.5570509069631363,
+        "calibration": [
+          {
+            "bucket": "0.0-0.1",
+            "n_predictions": 0,
+            "avg_predicted_prob": null,
+            "actual_win_rate": null
+          },
+          {
+            "bucket": "0.1-0.2",
+            "n_predictions": 3,
+            "avg_predicted_prob": 0.1771887544637845,
+            "actual_win_rate": 0.3333333333333333
+          },
+          {
+            "bucket": "0.2-0.3",
+            "n_predictions": 20,
+            "avg_predicted_prob": 0.2610909637802631,
+            "actual_win_rate": 0.3
+          },
+          {
+            "bucket": "0.3-0.4",
+            "n_predictions": 101,
+            "avg_predicted_prob": 0.3551578771103571,
+            "actual_win_rate": 0.32673267326732675
+          },
+          {
+            "bucket": "0.4-0.5",
+            "n_predictions": 196,
+            "avg_predicted_prob": 0.4544424321127533,
+            "actual_win_rate": 0.3826530612244898
+          },
+          {
+            "bucket": "0.5-0.6",
+            "n_predictions": 321,
+            "avg_predicted_prob": 0.5538471557206296,
+            "actual_win_rate": 0.4735202492211838
+          },
+          {
+            "bucket": "0.6-0.7",
+            "n_predictions": 480,
+            "avg_predicted_prob": 0.6502212287609165,
+            "actual_win_rate": 0.55625
+          },
+          {
+            "bucket": "0.7-0.8",
+            "n_predictions": 426,
+            "avg_predicted_prob": 0.7447565304658038,
+            "actual_win_rate": 0.676056338028169
+          },
+          {
+            "bucket": "0.8-0.9",
+            "n_predictions": 153,
+            "avg_predicted_prob": 0.8325729402535019,
+            "actual_win_rate": 0.7908496732026143
+          },
+          {
+            "bucket": "0.9-1.0",
+            "n_predictions": 9,
+            "avg_predicted_prob": 0.9317817961791504,
+            "actual_win_rate": 1.0
+          }
+        ],
+        "roc_auc": 0.6623017106446277
+      },
+      "coefficients_csv": "data/processed/coefficients_step3_plus_3b.csv",
+      "random_forest": {
+        "n": 1709,
+        "accuracy": 0.6161497952018724,
+        "log_loss": 0.666070281717193,
+        "brier_score": 0.233770710616995,
+        "avg_predicted_prob": 0.6121533060269164,
+        "actual_win_rate": 0.5570509069631363,
+        "calibration": [
+          {
+            "bucket": "0.0-0.1",
+            "n_predictions": 0,
+            "avg_predicted_prob": null,
+            "actual_win_rate": null
+          },
+          {
+            "bucket": "0.1-0.2",
+            "n_predictions": 2,
+            "avg_predicted_prob": 0.19,
+            "actual_win_rate": 0.0
+          },
+          {
+            "bucket": "0.2-0.3",
+            "n_predictions": 13,
+            "avg_predicted_prob": 0.2692307692307692,
+            "actual_win_rate": 0.3076923076923077
+          },
+          {
+            "bucket": "0.3-0.4",
+            "n_predictions": 87,
+            "avg_predicted_prob": 0.3640229885057471,
+            "actual_win_rate": 0.28735632183908044
+          },
+          {
+            "bucket": "0.4-0.5",
+            "n_predictions": 245,
+            "avg_predicted_prob": 0.4502176870748299,
+            "actual_win_rate": 0.3836734693877551
+          },
+          {
+            "bucket": "0.5-0.6",
+            "n_predictions": 406,
+            "avg_predicted_prob": 0.551871921182266,
+            "actual_win_rate": 0.5024630541871922
+          },
+          {
+            "bucket": "0.6-0.7",
+            "n_predictions": 507,
+            "avg_predicted_prob": 0.6513609467455621,
+            "actual_win_rate": 0.6055226824457594
+          },
+          {
+            "bucket": "0.7-0.8",
+            "n_predictions": 341,
+            "avg_predicted_prob": 0.7415053763440861,
+            "actual_win_rate": 0.6920821114369502
+          },
+          {
+            "bucket": "0.8-0.9",
+            "n_predictions": 81,
+            "avg_predicted_prob": 0.8372427983539095,
+            "actual_win_rate": 0.7777777777777778
+          },
+          {
+            "bucket": "0.9-1.0",
+            "n_predictions": 27,
+            "avg_predicted_prob": 0.9387654320987653,
+            "actual_win_rate": 0.7037037037037037
+          }
+        ],
+        "roc_auc": 0.6491652143023656
+      },
+      "rf_importances_csv": "data/processed/rf_importances_step3_plus_3b.csv"
+    }
+  }
+}
