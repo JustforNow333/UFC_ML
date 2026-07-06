@@ -93,6 +93,43 @@ def test_tott_fill_only_never_overwrites(greco_style_db):
     assert report.skipped_existing >= 1
 
 
+def test_tott_report_counts_duplicate_name_fighter_rows(tmp_path):
+    db = tmp_path / "ufc.db"
+    conn = connect(db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO fighters (name, normalized_name) VALUES (?, ?)",
+        ("Sam Same", "sam same"),
+    )
+    conn.execute(
+        "INSERT INTO fighters (name, normalized_name) VALUES (?, ?)",
+        ("Sam Same", "sam same"),
+    )
+    conn.execute(
+        "INSERT INTO fighters (name, normalized_name) VALUES (?, ?)",
+        ("Unique One", "unique one"),
+    )
+    conn.commit()
+    conn.close()
+
+    tott = tmp_path / "tott.csv"
+    pd.DataFrame({
+        "FIGHTER": ["Sam Same", "Unique One"],
+        "HEIGHT": ["5' 8\"", "6' 0\""],
+        "WEIGHT": ["155 lbs.", "170 lbs."],
+        "REACH": ['70"', '74"'],
+        "STANCE": ["Orthodox", "Southpaw"],
+        "DOB": ["Jan 01, 1990", "Feb 02, 1991"],
+        "URL": ["url-sam", "url-unique"],
+    }).to_csv(tott, index=False)
+
+    report = ingest_fighter_tott(str(tott), str(db))
+
+    assert report.fighters_in_db == 3
+    assert report.matched == 1
+    assert report.skipped_ambiguous_name == 1
+
+
 def test_convert_greco_fights_outcomes():
     events = pd.DataFrame({"EVENT": ["UFC 9"], "DATE": ["May 17, 1996"],
                            "URL": ["u"], "LOCATION": ["x"]})

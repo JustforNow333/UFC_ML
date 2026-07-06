@@ -114,16 +114,18 @@ def ingest_fighter_tott(csv_path: str, db_path: str) -> TottReport:
         name_counts: dict[str, int] = {}
         identity_name_counts: dict[str, int] = {}
         db_fighters = {}
+        fighter_rows = 0
         for fid, key in conn.execute(
             "SELECT fighter_id, normalized_name FROM fighters"
         ):
+            fighter_rows += 1
             name_counts[key] = name_counts.get(key, 0) + 1
             db_fighters[key] = fid
         for (key,) in conn.execute(
             "SELECT normalized_name FROM fighter_source_ids"
         ):
             identity_name_counts[key] = identity_name_counts.get(key, 0) + 1
-        report.fighters_in_db = len(db_fighters)
+        report.fighters_in_db = fighter_rows
 
         for _, row in df.iterrows():
             slug = url_slug(row.get("url"))

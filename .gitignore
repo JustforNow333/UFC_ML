@@ -29,6 +29,7 @@ data/*.sqlite-*
 data/models/
 *.joblib
 data/processed/
+reports/
 
 # OS/editor noise
 .DS_Store

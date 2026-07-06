@@ -1,0 +1,65 @@
+{
+  "_comment": "Official model benchmark. Any candidate model must beat these held-out test metrics (log loss first, then Brier, then calibration gaps) on the same chronological 3-way split before replacing the official model. Accuracy alone is never a success criterion. Do not regenerate this file from a rerun without explicit sign-off; it is the fixed reference point, not a pipeline output.",
+  "recorded": "2026-07-05",
+  "recorded_at_commit": "051e54c3d6fe43192084b3b515cb933882b7570b",
+  "official_model": {
+    "label": "Step 3C LR + Platt",
+    "base_model": "logistic regression on Step 3C features (Step 3 + 3B + matchup interactions)",
+    "calibration_method": "platt",
+    "features_input": "data/processed/ufc_prefight_features_step3c.csv",
+    "metrics_source": "data/processed/step3c_calibration_comparison.json",
+    "split": {
+      "mode": "chronological 3-way (train -> calibration -> test)",
+      "train_frac": 0.7,
+      "calibration_frac": 0.15,
+      "n_train": 5983,
+      "n_calibration": 1282,
+      "n_test": 1282,
+      "train_dates": ["1994-03-11", "2021-05-08"],
+      "calibration_dates": ["2021-05-08", "2023-11-11"],
+      "test_dates": ["2023-11-11", "2026-05-16"],
+      "random_state": 42
+    },
+    "test_metrics": {
+      "log_loss": 0.6442244532062779,
+      "brier_score": 0.22671650863397674,
+      "roc_auc": 0.6759680308667494,
+      "accuracy": 0.6193447737909517,
+      "calibration_gap_above_0.7": -0.028596667813463483,
+      "calibration_gap_above_0.8": -0.11132901161363362
+    }
+  },
+  "reference_points": {
+    "elo_baseline": {
+      "metrics_source": "data/processed/step3c_calibration_comparison.json",
+      "test_metrics": {
+        "log_loss": 0.6839791288077226,
+        "brier_score": 0.24547382177053229,
+        "roc_auc": 0.5593441800035434,
+        "accuracy": 0.5483619344773791
+      }
+    },
+    "step3c_lr_uncalibrated": {
+      "metrics_source": "data/processed/step3c_calibration_comparison.json",
+      "test_metrics": {
+        "log_loss": 0.6546873516247897,
+        "brier_score": 0.2315304539863376,
+        "roc_auc": 0.6759680308667494,
+        "accuracy": 0.6216848673946958,
+        "calibration_gap_above_0.7": 0.0682720664670674
+      }
+    },
+    "step3b_lr_platt_fallback": {
+      "_comment": "Preserved fallback benchmark if Step 3C features are ever unavailable.",
+      "metrics_source": "data/processed/calibration_comparison.json",
+      "test_metrics": {
+        "log_loss": 0.6449419123143023,
+        "calibration_gap_above_0.7": -0.05251818041214551
+      }
+    },
+    "naive_coin_flip": {
+      "log_loss": 0.6931471805599453,
+      "_comment": "ln(2); predicting 0.5 for every fight."
+    }
+  }
+}
