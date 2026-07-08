@@ -29,6 +29,7 @@ data/*.sqlite-*
 data/models/
 *.joblib
 data/processed/
+data/live/
 reports/
 
 # OS/editor noise

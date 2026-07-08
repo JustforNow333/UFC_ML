@@ -1,13 +1,41 @@
 {
-  "_comment": "Official model benchmark. Any candidate model must beat these held-out test metrics (log loss first, then Brier, then calibration gaps) on the same chronological 3-way split before replacing the official model. Accuracy alone is never a success criterion. Do not regenerate this file from a rerun without explicit sign-off; it is the fixed reference point, not a pipeline output.",
-  "recorded": "2026-07-05",
-  "recorded_at_commit": "051e54c3d6fe43192084b3b515cb933882b7570b",
+  "_comment": "Official model benchmark. Future candidates must beat the current official_model held-out test metrics (log loss first, then Brier, then calibration gaps) on the same chronological 3-way split before replacing it. Accuracy alone is never a success criterion. The final held-out test has been touched by prior diagnostics, so this promotion is based primarily on validation stability plus consistency with the held-out re-report; do not regenerate this file from a rerun without explicit sign-off.",
+  "recorded": "2026-07-07",
+  "recorded_at_commit": "e8ad71cf76d7cc4a40fce0c6527e810b16e48168",
+  "promotion": {
+    "promoted_from": "old_official_step3c_lr_platt",
+    "promoted_to": "step5c_stronger_regularized_lr_drop_weight_class_platt",
+    "decision_source": "Run 2.1 and Run 3 validation-confirmed stronger regularization; explicit post-Run 3 promotion sign-off.",
+    "primary_basis": "Five pre-test validation folds beat the old official model 5/5 with mean Platt log-loss gain 0.008862; held-out test re-report was directionally consistent with gain 0.002305.",
+    "final_test_caveat": "The final held-out test was already touched in Step 5B/5B.1/5C diagnostics, so future claims should treat it as a consistency check, not a fresh independent selection signal.",
+    "division_interactions_promoted": false,
+    "raw_weight_class_promoted": false
+  },
   "official_model": {
-    "label": "Step 3C LR + Platt",
-    "base_model": "logistic regression on Step 3C features (Step 3 + 3B + matchup interactions)",
+    "name": "step5c_stronger_regularized_lr_drop_weight_class_platt",
+    "label": "Step 5C stronger-regularized LR, raw weight_class dropped + Platt",
+    "base_model": "logistic regression on Step 3C numeric features with stronger elastic-net regularization; raw weight_class dropped; no division interaction features",
+    "model_family": "logistic_regression",
     "calibration_method": "platt",
     "features_input": "data/processed/ufc_prefight_features_step3c.csv",
-    "metrics_source": "data/processed/step3c_calibration_comparison.json",
+    "metrics_source": "reports/step5c_division_interactions.json",
+    "selection_source": "reports/step5b1_regularization_confirmation.json and reports/step5c_division_interactions.json",
+    "hyperparameters": {
+      "penalty": "elasticnet",
+      "C": 0.003,
+      "solver": "saga",
+      "l1_ratio": 0.1,
+      "class_weight": null,
+      "max_iter": 5000
+    },
+    "feature_config": {
+      "raw_weight_class": "dropped",
+      "division_interactions": "not_included",
+      "base_feature_set": "Step 3C numeric features",
+      "n_total_features_post_encoding": 43,
+      "n_nonzero_coefficients": 28,
+      "n_zeroed_coefficients": 15
+    },
     "split": {
       "mode": "chronological 3-way (train -> calibration -> test)",
       "train_frac": 0.7,
@@ -20,16 +48,68 @@
       "test_dates": ["2023-11-11", "2026-05-16"],
       "random_state": 42
     },
+    "validation_evidence": {
+      "protocol": "five expanding-window pre-test validation folds; Platt calibrated on each fold calibration window and scored on each fold validation window",
+      "old_official_mean_platt_log_loss": 0.6673284938546409,
+      "selected_candidate_mean_platt_log_loss": 0.6584660204680894,
+      "gain_vs_old_official": 0.00886247338655144,
+      "folds_won_vs_old_official": "5/5",
+      "best_interaction_mean_platt_log_loss": 0.6616602105255869,
+      "gain_vs_best_interaction": 0.003194190057497437
+    },
     "test_metrics": {
-      "log_loss": 0.6442244532062779,
-      "brier_score": 0.22671650863397674,
-      "roc_auc": 0.6759680308667494,
-      "accuracy": 0.6193447737909517,
-      "calibration_gap_above_0.7": -0.028596667813463483,
-      "calibration_gap_above_0.8": -0.11132901161363362
+      "log_loss": 0.6419199384228512,
+      "brier_score": 0.22559535813023482,
+      "roc_auc": 0.6791349239158251,
+      "accuracy": 0.6287051482059283,
+      "calibration_gap_above_0.7": -0.014681442235027986,
+      "calibration_gap_above_0.8": -0.04905653899584206
+    },
+    "test_protocol_note": "Held-out test metrics are a re-report for the validation-selected candidate. The final held-out test was already touched in prior diagnostics, so the promotion claim should emphasize validation stability plus consistency with this re-report."
+  },
+  "historical_baselines": {
+    "old_official_step3c_lr_platt": {
+      "_comment": "Former official model before the 2026-07-07 Step 5C promotion.",
+      "label": "Step 3C LR + Platt",
+      "base_model": "logistic regression on Step 3C features (Step 3 + 3B + matchup interactions)",
+      "calibration_method": "platt",
+      "features_input": "data/processed/ufc_prefight_features_step3c.csv",
+      "metrics_source": "data/processed/step3c_calibration_comparison.json",
+      "split": {
+        "mode": "chronological 3-way (train -> calibration -> test)",
+        "train_frac": 0.7,
+        "calibration_frac": 0.15,
+        "n_train": 5983,
+        "n_calibration": 1282,
+        "n_test": 1282,
+        "train_dates": ["1994-03-11", "2021-05-08"],
+        "calibration_dates": ["2021-05-08", "2023-11-11"],
+        "test_dates": ["2023-11-11", "2026-05-16"],
+        "random_state": 42
+      },
+      "test_metrics": {
+        "log_loss": 0.6442244532062779,
+        "brier_score": 0.22671650863397674,
+        "roc_auc": 0.6759680308667494,
+        "accuracy": 0.6193447737909517,
+        "calibration_gap_above_0.7": -0.028596667813463483,
+        "calibration_gap_above_0.8": -0.11132901161363362
+      }
     }
   },
   "reference_points": {
+    "old_official_step3c_lr_platt": {
+      "_comment": "Historical official benchmark retained for Run 4 comparisons.",
+      "metrics_source": "data/processed/step3c_calibration_comparison.json",
+      "test_metrics": {
+        "log_loss": 0.6442244532062779,
+        "brier_score": 0.22671650863397674,
+        "roc_auc": 0.6759680308667494,
+        "accuracy": 0.6193447737909517,
+        "calibration_gap_above_0.7": -0.028596667813463483,
+        "calibration_gap_above_0.8": -0.11132901161363362
+      }
+    },
     "elo_baseline": {
       "metrics_source": "data/processed/step3c_calibration_comparison.json",
       "test_metrics": {
