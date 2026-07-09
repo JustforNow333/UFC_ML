@@ -21,8 +21,9 @@ data/*.db
 data/*.db-*
 data/*.sqlite
 data/*.sqlite-*
-data/*.db.*backup*
-data/*.sqlite.*backup*
+data/*.db.*
+data/*.sqlite.*
+*.bak
 *.db-journal
 *.db-wal
 *.db-shm
