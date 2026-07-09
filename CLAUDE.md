@@ -152,6 +152,21 @@ central SQLite database (`data/ufc.db`):
    validates the output against Step 6B and refuses to write an invalid file. It
    does NOT scrape and adds no odds/markets; it reads the existing history DB
    only and never writes `data/processed/` or the benchmark file.
+18. **UFCStats data-update audit (Step 6D.1)** —
+   `ufc_pipeline/step6d_ufcstats_update_audit.py`: a **read-only / dry-run** audit
+   that checks UFCStats against `data/ufc.db` and reports what events, fights,
+   fighters, and results look missing or stale (so a human can decide whether the
+   history DB — which Step 6C depends on — needs refreshing). **It never writes
+   the DB** (opens it SQLite `mode=ro`); a guarded apply is deferred to a future
+   Step 6D.2. Stdlib-only scraping (`urllib` + `html.parser`, no new deps), a
+   polite delay + `--max-events` cap, an on-disk HTML cache (`--cache-dir`) and
+   `--offline-cache-only` mode. Matching prefers stable UFCStats fighter URLs
+   (already stored in `fighter_source_ids`), falls back to exact normalized name
+   matching, and **reports ambiguities instead of guessing**. UFCStats currently
+   serves a JavaScript browser-challenge to plain HTTP clients; the fetcher
+   **detects it and degrades gracefully**, telling the user to supply cached HTML
+   (saved from a real browser) — it does not try to defeat the challenge. Reports
+   go to `reports/data_update/step6d1_ufcstats_audit.{json,md}`. No odds/markets.
 
 Official LR baseline as of 2026-07-07:
 **step5c_stronger_regularized_lr_drop_weight_class_platt**. This is Step 3C
@@ -326,6 +341,44 @@ step is **Step 6D: a data-source updater / UFCStats scraper** (only after Step 6
 is verified in production use) — still no sportsbook odds or prediction markets
 unless explicitly approved.
 
+Step 6D.1 delivered the **read-only** first half of that updater: a UFCStats
+audit that never writes the DB. Operational finding: UFCStats serves a
+JavaScript proof-of-work browser-challenge to plain HTTP clients, so a live
+`urllib` fetch is blocked; the fetcher detects this and degrades gracefully
+(reports `fetch_available=false` and recommends `--cache-dir` + reviewing before
+any apply) rather than trying to bypass it. The offline-cache smoke (seeded HTML)
+correctly flagged a missing local event, missing fights/fighters, and the
+URL→name matching fallback, and the real `data/ufc.db` md5 was unchanged across
+runs.
+
+**Step 6D.1b (manual browser-save workflow).** Because the live challenge can't
+be scripted (and we don't bypass it), the supported way to run a *real* audit is
+offline-cache mode over HTML you save from a normal browser:
+1. Open each UFCStats page in a browser and **File → Save Page As → "Web Page,
+   HTML only"** into `data/cache/ufcstats/` (see the README there). Friendly
+   filenames the audit accepts: `completed_events.html`, `upcoming_events.html`,
+   `event_<id>.html` (the `<id>` is the hash in the `event-details/<id>` URL);
+   its own `sha1(url).html` cache files also work.
+2. Save, in priority order: the **completed-events** page, the **upcoming-events**
+   page, one **recent** completed event-detail page, and one **older** event
+   page.
+3. `python scripts/validate_step6d1_cache.py --cache-dir data/cache/ufcstats`
+   classifies each cached file (completed/upcoming/event/fighter/challenge/
+   unknown), previews parsed counts, flags challenge pages, and says exactly what
+   to save next — offline, and it never opens `data/ufc.db`.
+4. Then run the audit with `--offline-cache-only`. Its report now carries a
+   `cache_source_quality` block (`offline_cache_only`, `cache_dir`,
+   `cache_files_used`, `expected_missing`, `page_types_detected`,
+   `challenge_pages_detected`, `parse_warnings`, recommendation). Verified: the
+   validator gives clear guidance on an empty cache, the offline audit degrades
+   cleanly, and `data/ufc.db` / `data/processed/` md5s stay unchanged. Real
+   browser-saved HTML has not been supplied in this repo yet, so a real diff
+   still awaits those cached pages.
+
+**Next is Step 6D.2**: a *guarded* DB apply (insert-only, never overwrite
+existing rows, dry-run-diff → confirm → apply), driven by cached UFCStats HTML,
+only after this audit is verified on real cached pages and explicitly approved.
+
 There is deliberately **no betting logic, no odds as features, no UI**.
 
 ## Setup
@@ -396,6 +449,12 @@ There is deliberately **no betting logic, no odds as features, no UI**.
 # then feed the built features into Step 6B (or use --run-predictions to chain automatically):
 .venv/bin/python scripts/run_step6b_live_predictions.py --input data/live/upcoming_card_features.csv \
     --ledger data/live/live_predictions.csv --output-dir reports/live
+# Step 6D.1b: validate manually browser-saved UFCStats HTML (offline, never opens the DB)
+.venv/bin/python scripts/validate_step6d1_cache.py --cache-dir data/cache/ufcstats
+# Step 6D.1 UFCStats data-update audit (READ-ONLY dry run; never writes data/ufc.db; writes reports/data_update/;
+# live fetch is blocked by a JS challenge, so use --cache-dir of saved HTML + --offline-cache-only)
+.venv/bin/python scripts/run_step6d1_ufcstats_audit.py --db data/ufc.db --output-dir reports/data_update \
+    --max-events 10 --cache-dir data/cache/ufcstats --offline-cache-only --include-upcoming
 ```
 
 ## Non-negotiable invariants
@@ -493,6 +552,7 @@ complete.
 | `ufc_pipeline/step6a_pseudo_live_replay.py` | Step 6A: event-by-event pseudo-live replay of the official model — per-event refit+Platt on strictly-earlier fights, replay ledger, rolling/calibration/drift/leakage reporting (pipeline-validation tool, never changes the model) |
 | `ufc_pipeline/step6b_live_predictions.py` | Step 6B: forward live prediction ledger — validate upcoming-card features, predict with the official model, append-only `data/live/` ledger, result resolution, live model report with small-sample warnings (never changes the model) |
 | `ufc_pipeline/step6c_upcoming_feature_builder.py` | Step 6C: matchup CSV → Step 3C feature CSV for Step 6B — synthetic-fight direct recomputation via the real builders (time-safe < event_date), deterministic name matching, debut/unmatched/ambiguous handling, Step 6B output validation, build report (no scraping, no odds) |
+| `ufc_pipeline/step6d_ufcstats_update_audit.py` | Step 6D.1/6D.1b: READ-ONLY UFCStats vs `data/ufc.db` audit — stdlib fetcher w/ cache (friendly names) + graceful JS-challenge degradation, pure HTML parsers, `detect_page_type`/`validate_cache` cache validator, URL-preferred fighter matching, missing/stale/ambiguous detection, cache-source-quality report (never writes the DB) |
 | `benchmarks/official_baseline.json` | fixed official-model benchmark reference (never regenerate casually) |
 | `scripts/` | one CLI wrapper per pipeline stage |
 | `docs/greco_field_audit.md` | source-overlap rules (mdabbert vs Greco) |

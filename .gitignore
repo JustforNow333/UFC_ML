@@ -21,9 +21,14 @@ data/*.db
 data/*.db-*
 data/*.sqlite
 data/*.sqlite-*
+data/*.db.*backup*
+data/*.sqlite.*backup*
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Browser-saved UFCStats HTML and other local cache files
+data/cache/
 
 # Generated model artifacts and pipeline outputs
 data/models/

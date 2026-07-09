@@ -201,6 +201,17 @@ def test_unmatched_fighter_is_failed_row(history_db):
     assert any("unmatched" in r for f in res["report"]["failed_rows"] for r in f["reasons"])
 
 
+def test_bad_event_date_is_failed_row_not_exception(history_db):
+    df = _matchups([("Jon Jones", "Stipe Miocic")])
+    df.loc[0, "event_date"] = "not-a-date"
+
+    res = build_upcoming_features(df, db_path=history_db)
+
+    assert len(res["features"]) == 0
+    assert res["report"]["n_failed_rows"] == 1
+    assert any("unparseable event_date" in r for r in res["report"]["failed_rows"][0]["reasons"])
+
+
 def test_ambiguous_fighter_is_failed_row(history_db):
     res = build_upcoming_features(_matchups([("Jon Jones", "Bruno Silva")]), db_path=history_db)
     assert len(res["features"]) == 0

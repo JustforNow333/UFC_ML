@@ -270,7 +270,11 @@ def build_upcoming_features(
     resolved, match_review, failed = [], [], []
     for idx, row in matchups_df.iterrows():
         rs = schema["row_status"][idx]
-        event_date = str(pd.to_datetime(event_date_override if event_date_override is not None else row["event_date"]).date())
+        raw_event_date = event_date_override if event_date_override is not None else row.get("event_date")
+        try:
+            event_date = str(pd.to_datetime(raw_event_date).date())
+        except (ValueError, TypeError):
+            event_date = "" if raw_event_date is None else str(raw_event_date)
         event_name = row.get("event_name")
         weight_class = row.get("weight_class") if "weight_class" in matchups_df.columns else None
         ma = match_fighter(row.get("fighter_a"), lookup, allow_fuzzy_match)
