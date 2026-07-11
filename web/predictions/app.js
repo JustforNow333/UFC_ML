@@ -1,6 +1,14 @@
 "use strict";
 
 const API_URL = "/api/predictions/upcoming";
+const CARD_SECTION_ORDER = ["main_event", "main_card", "prelims", "early_prelims", "fight_card"];
+const CARD_SECTION_LABELS = {
+  main_event: "Main Event",
+  main_card: "Main Card",
+  prelims: "Prelims",
+  early_prelims: "Early Prelims",
+  fight_card: "Fight Card"
+};
 
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -101,20 +109,36 @@ function buildEventSection(event) {
     createElement("span", "event-count", `${event.fight_count} predicted ${event.fight_count === 1 ? "fight" : "fights"}`)
   );
 
-  const fights = createElement("div", "fight-list");
-  event.fights.forEach((fight) => fights.append(buildFightCard(fight)));
+  const cardSections = createElement("div", "card-sections");
+  const groupedFights = new Map();
+  event.fights.forEach((fight) => {
+    const key = CARD_SECTION_LABELS[fight.card_section] ? fight.card_section : "fight_card";
+    if (!groupedFights.has(key)) groupedFights.set(key, []);
+    groupedFights.get(key).push(fight);
+  });
+  CARD_SECTION_ORDER.forEach((key) => {
+    const sectionFights = groupedFights.get(key);
+    if (!sectionFights?.length) return;
+    const cardSection = createElement("section", "card-section");
+    cardSection.dataset.cardSection = key;
+    cardSection.append(createElement("h3", "card-section-heading", CARD_SECTION_LABELS[key]));
+    const fights = createElement("div", "fight-list");
+    sectionFights.forEach((fight) => fights.append(buildFightCard(fight)));
+    cardSection.append(fights);
+    cardSections.append(cardSection);
+  });
 
   const details = createElement("details", "event-details");
   details.append(createElement("summary", "", "Model details"));
   const metadata = createElement("dl", "metadata-grid");
-  appendMetadata(metadata, "Batch", event.batch_id);
-  appendMetadata(metadata, "Model", event.model_version);
-  appendMetadata(metadata, "Calibration", event.calibration_version);
+  appendMetadata(metadata, event.batch_ids?.length > 1 ? "Batches" : "Batch", (event.batch_ids || [event.batch_id]).join(", "));
+  appendMetadata(metadata, "Model", (event.model_versions || [event.model_version]).join(", "));
+  appendMetadata(metadata, "Calibration", (event.calibration_versions || [event.calibration_version]).join(", "));
   appendMetadata(metadata, "Prediction status", "Official frozen prediction");
   appendMetadata(metadata, "Recorded", event.prediction_created_at);
   details.append(metadata);
 
-  section.append(header, fights, details);
+  section.append(header, cardSections, details);
   return section;
 }
 

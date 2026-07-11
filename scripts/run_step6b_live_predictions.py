@@ -36,6 +36,10 @@ def main() -> None:
                    help="Replace an existing PENDING prediction for the same fight.")
     p.add_argument("--allow-duplicate-predictions", action="store_true", default=False,
                    help="Append a new versioned prediction row for a fight already in the ledger.")
+    p.add_argument(
+        "--preserve-existing-ledger-bytes", action="store_true", default=False,
+        help="Append only new rows and prove every existing ledger byte remains unchanged; incompatible with overwrite/duplicate flags.",
+    )
     p.add_argument("--random-seed", type=int, default=RANDOM_STATE)
     args = p.parse_args()
 
@@ -45,6 +49,7 @@ def main() -> None:
         prediction_batch_id=args.prediction_batch_id,
         allow_duplicate_predictions=args.allow_duplicate_predictions,
         overwrite_existing_pending=args.overwrite_existing_pending,
+        preserve_existing_ledger_bytes=args.preserve_existing_ledger_bytes,
         random_seed=args.random_seed,
     )
     print(f"Live predictions: batch {report['prediction_batch_id']} — {report['n_predictions_generated']} predictions "

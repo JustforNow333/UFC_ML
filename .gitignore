@@ -61,7 +61,9 @@ data/cache/
 data/models/
 *.joblib
 data/processed/
-data/live/
+data/live/*
+!data/live/event_manifests/
+!data/live/event_manifests/*.csv
 reports/
 
 # Logs and temporary files

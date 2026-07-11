@@ -769,6 +769,7 @@ binds to loopback by default.
 .venv/bin/python scripts/serve_predictions_dashboard.py
 # Open http://127.0.0.1:8000/
 # Optional: --host 127.0.0.1 --port 8000
+# Optional metadata root: --manifest-root data/live/event_manifests
 ```
 
 The same process serves the stable read-only endpoint:
@@ -789,19 +790,40 @@ its event date is in the past. An empty upcoming ledger is a normal response:
 | Dashboard field | Production source |
 |---|---|
 | fight ID | `prediction_id` |
-| batch ID | `prediction_batch_id` |
+| batch IDs | `prediction_batch_id` from every contributing event batch |
 | event/date | `event_name`, `event_date` |
 | fighters | `fighter_a`, `fighter_b` |
 | probabilities | `predicted_probability_a`, `predicted_probability_b` |
 | unresolved state | `status` plus blank target/result/resolution/scoring fields |
 | model metadata | `model_version`, `calibration_version` |
 | creation time | `prediction_timestamp_utc` |
-| weight class | `weight_class` when present; otherwise the safely confined feature CSV named by `input_source` |
+| weight class | active event manifest, then `weight_class` when present, then the safely confined feature CSV named by `input_source` |
+| card section/order | `card_section` and `bout_order` from `data/live/event_manifests/*.csv` |
 
 The current ledger has no `weight_class` column. The service may enrich that
 display field from an `input_source` CSV only when the resolved file remains
 under `data/live/features/`; arbitrary paths are never read. If no safe weight
 class is available, the card displays `UFC Bout`.
+
+Optional event manifests add presentation metadata without mutating frozen
+ledger rows. They are joined by event date/name plus an unordered,
+accent/punctuation-normalized fighter pair. Events are grouped independently of
+batch ID, so a main batch and a supplemental prelim batch render once with all
+contributing `batch_ids`. Supported card sections render in this order: Main
+Event, Main Card, Prelims, Early Prelims. `bout_order=1` means the main event;
+larger values proceed down the published card toward the opening bout.
+
+Only manifest rows with `fight_status=confirmed` are active. Marking a matchup
+`cancelled`, `postponed`, or `replaced` hides it from the upcoming view while
+preserving its frozen ledger row for audit. Events without a manifest and fights
+missing manifest metadata still render under the safe `Fight Card` fallback.
+The current sourced UFC 329 manifest is
+`data/live/event_manifests/ufc329_20260711_card.csv`.
+
+For a supplemental production batch whose existing CSV serialization must stay
+byte-for-byte frozen, Step 6B supports `--preserve-existing-ledger-bytes`. This
+mode appends only the accepted tail, verifies the old byte prefix afterward,
+and refuses use with overwrite or duplicate-version flags.
 
 Rows are displayable only when they are `live_forward`, unresolved, and their
 batch identifier marks them as both `official` and `frozen`. Fighter/event

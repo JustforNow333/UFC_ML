@@ -27,6 +27,7 @@ from ufc_pipeline.step5b_regularization_search import WEIGHT_CLASS_COLUMN  # noq
 from ufc_pipeline import step6b_live_predictions as s6b  # noqa: E402
 from ufc_pipeline.step6b_live_predictions import (  # noqa: E402
     LEDGER_COLUMNS,
+    append_ledger_preserving_existing_bytes,
     append_predictions,
     build_live_model_report,
     empty_ledger,
@@ -186,6 +187,36 @@ def test_ledger_append_overwrite_pending_replaces():
     assert stats["n_pending_overwritten"] == 1
     assert len(led2) == 1  # old pending replaced by the new one (not duplicated)
     assert float(led2[led2["status"] == "pending"]["predicted_probability_a"].iloc[-1]) == 0.7
+
+
+def test_guarded_file_append_preserves_every_existing_byte(tmp_path):
+    ledger_path = tmp_path / "ledger.csv"
+    existing = pd.DataFrame([
+        ledger_row("2026-01-01", "A", "B", batch="B1", p=0.6000000000000001),
+    ], columns=LEDGER_COLUMNS)
+    existing.to_csv(ledger_path, index=False, lineterminator="\n")
+    before = ledger_path.read_bytes()
+    updated, stats = append_predictions(
+        existing, [ledger_row("2026-01-01", "C", "D", batch="B2")], False, False,
+    )
+    assert stats["n_accepted"] == 1
+    assert append_ledger_preserving_existing_bytes(existing, updated, ledger_path) == 1
+    after = ledger_path.read_bytes()
+    assert after[:len(before)] == before
+    assert len(pd.read_csv(ledger_path)) == 2
+
+
+def test_guarded_file_append_rejects_reversed_duplicate_across_batches(tmp_path):
+    ledger_path = tmp_path / "ledger.csv"
+    existing = pd.DataFrame([ledger_row("2026-01-01", "A", "B", batch="B1")], columns=LEDGER_COLUMNS)
+    existing.to_csv(ledger_path, index=False)
+    before = ledger_path.read_bytes()
+    updated, stats = append_predictions(
+        existing, [ledger_row("2026-01-01", "B", "A", batch="B2")], False, False,
+    )
+    assert stats["n_rejected_duplicates"] == 1
+    assert append_ledger_preserving_existing_bytes(existing, updated, ledger_path) == 0
+    assert ledger_path.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------

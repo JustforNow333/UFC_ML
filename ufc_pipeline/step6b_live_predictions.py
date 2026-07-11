@@ -415,6 +415,41 @@ def write_ledger(df: pd.DataFrame, path: str | Path) -> None:
     df[LEDGER_COLUMNS].to_csv(p, index=False)
 
 
+def append_ledger_preserving_existing_bytes(
+    existing: pd.DataFrame, updated: pd.DataFrame, path: str | Path,
+) -> int:
+    """Append only the new tail while proving the on-disk prefix is untouched.
+
+    Production supplemental batches use this path because a normal pandas CSV
+    rewrite may change formatting of frozen rows even when their values did not
+    change. Any removal, reorder, or value change in the existing prefix aborts.
+    """
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        write_ledger(updated, p)
+        return int(len(updated))
+    if len(updated) < len(existing):
+        raise ValueError("Byte-preserving append cannot remove existing ledger rows.")
+
+    expected_prefix = existing[LEDGER_COLUMNS].fillna("").astype(str).reset_index(drop=True)
+    actual_prefix = updated.iloc[:len(existing)][LEDGER_COLUMNS].fillna("").astype(str).reset_index(drop=True)
+    if not expected_prefix.equals(actual_prefix):
+        raise ValueError("Byte-preserving append detected a changed or reordered existing ledger row.")
+
+    tail = updated.iloc[len(existing):][LEDGER_COLUMNS]
+    if tail.empty:
+        return 0
+    before = p.read_bytes()
+    separator = b"" if before.endswith((b"\n", b"\r")) else b"\n"
+    payload = tail.to_csv(index=False, header=False, lineterminator="\n").encode("utf-8")
+    with p.open("ab") as handle:
+        handle.write(separator + payload)
+    after = p.read_bytes()
+    if after[:len(before)] != before:
+        raise RuntimeError("Existing ledger bytes changed during guarded append.")
+    return int(len(tail))
+
+
 def _row_active(row) -> bool:
     return str(row.get("status")) in ("pending", "resolved")
 
@@ -491,9 +526,14 @@ def run_live_predictions(
     prediction_batch_id: str | None = None,
     allow_duplicate_predictions: bool = False,
     overwrite_existing_pending: bool = False,
+    preserve_existing_ledger_bytes: bool = False,
     random_seed: int = RANDOM_STATE,
     max_iter: int = DEFAULT_MAX_ITER,
 ) -> dict:
+    if preserve_existing_ledger_bytes and (allow_duplicate_predictions or overwrite_existing_pending):
+        raise ValueError(
+            "Byte-preserving append requires duplicate and overwrite flags to remain disabled."
+        )
     batch_id = prediction_batch_id or default_batch_id()
     base_numeric, _categorical = official_step3c_features()
     df = pd.read_csv(input_csv)
@@ -546,7 +586,13 @@ def run_live_predictions(
 
     ledger_df = load_ledger(ledger_path)
     updated, append_stats = append_predictions(ledger_df, new_rows, allow_duplicate_predictions, overwrite_existing_pending)
-    write_ledger(updated, ledger_path)
+    if preserve_existing_ledger_bytes:
+        appended_rows = append_ledger_preserving_existing_bytes(ledger_df, updated, ledger_path)
+        ledger_write_mode = "byte_preserving_append"
+    else:
+        write_ledger(updated, ledger_path)
+        appended_rows = int(len(updated) - len(ledger_df) + append_stats["n_pending_overwritten"])
+        ledger_write_mode = "rewrite"
 
     drift = _live_drift(df_valid, trained["official_train_calib"], base_numeric) if len(df_valid) else {"n_rows": 0}
     leakage = _live_leakage_checks(base_numeric, validation, trained["config"])
@@ -568,6 +614,8 @@ def run_live_predictions(
         "events": sorted({(str(r.get("event_date")), str(r.get("event_name"))) for r in new_rows}),
         "prediction_table": prediction_table,
         "append_stats": append_stats,
+        "ledger_write_mode": ledger_write_mode,
+        "n_rows_physically_appended": appended_rows,
         "duplicate_warnings": append_stats["warnings"],
         "data_quality_warnings": validation["warnings"],
         "input_validation": {k: v for k, v in validation.items() if k != "row_status"},

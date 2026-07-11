@@ -136,6 +136,16 @@ h1 { margin: 0; font-size: clamp(2.2rem, 6vw, 4.4rem); line-height: 0.98; letter
 .event-date { margin: 0 0 6px; color: var(--red); font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
 .event-title { margin: 0; font-size: clamp(1.5rem, 4vw, 2.25rem); letter-spacing: -0.03em; }
 .event-count { flex: none; color: var(--muted); font-size: 0.9rem; }
+.card-sections { display: grid; gap: 28px; }
+.card-section { min-width: 0; }
+.card-section-heading {
+  margin: 0 0 12px;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
 .fight-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 
 .fight-card {

@@ -78,10 +78,23 @@ def write_ledger(path: Path, rows: list[dict], columns=LEDGER_COLUMNS) -> None:
         writer.writerows(rows)
 
 
+def write_manifest(path: Path, rows: list[dict]) -> None:
+    columns = [
+        "event_id", "event_name", "event_date", "fighter_a", "fighter_b", "weight_class",
+        "card_section", "bout_order", "fight_status", "source", "source_checked_at",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def dashboard_config(tmp_path: Path, ledger: Path, today=date(2026, 7, 1)) -> DashboardConfig:
     return DashboardConfig(
         ledger_path=ledger,
         feature_root=tmp_path / "data" / "live" / "features",
+        manifest_root=tmp_path / "data" / "live" / "event_manifests",
         static_dir=DEFAULT_STATIC_DIR,
         repo_root=tmp_path,
         today=today,
@@ -150,6 +163,56 @@ def test_multiple_events_group_and_sort_chronologically(tmp_path):
     events = load_upcoming_predictions(dashboard_config(tmp_path, ledger))["events"]
     assert [event["event_name"] for event in events] == ["UFC Early", "UFC Later"]
     assert [fight["fight_id"] for fight in events[0]["fights"]] == ["early-a", "early-b"]
+
+
+def test_main_and_supplemental_batches_share_one_event(tmp_path):
+    ledger = tmp_path / "ledger.csv"
+    rows = [
+        prediction_row("main", fighter_a="Main A", fighter_b="Main B", batch="ufc_test_official_main_frozen"),
+        prediction_row("prelim", fighter_a="Prelim A", fighter_b="Prelim B", batch="ufc_test_official_prelims_frozen"),
+    ]
+    write_ledger(ledger, rows)
+    write_manifest(tmp_path / "data/live/event_manifests/card.csv", [
+        {"event_id": "ufc-test", "event_name": "UFC Test One", "event_date": "2026-08-01",
+         "fighter_a": "Main B", "fighter_b": "Main A", "weight_class": "Welterweight",
+         "card_section": "main_event", "bout_order": 1, "fight_status": "confirmed",
+         "source": "official", "source_checked_at": "2026-07-01T00:00:00Z"},
+        {"event_id": "ufc-test", "event_name": "UFC Test One", "event_date": "2026-08-01",
+         "fighter_a": "Prelim A", "fighter_b": "Prelim B", "weight_class": "Lightweight",
+         "card_section": "prelims", "bout_order": 2, "fight_status": "confirmed",
+         "source": "official", "source_checked_at": "2026-07-01T00:00:00Z"},
+    ])
+    events = load_upcoming_predictions(dashboard_config(tmp_path, ledger))["events"]
+    assert len(events) == 1
+    assert events[0]["batch_ids"] == ["ufc_test_official_main_frozen", "ufc_test_official_prelims_frozen"]
+    assert [(fight["fight_id"], fight["card_section"]) for fight in events[0]["fights"]] == [
+        ("main", "main_event"), ("prelim", "prelims"),
+    ]
+
+
+def test_cancelled_manifest_fight_is_hidden_but_ledger_preserved(tmp_path):
+    ledger = tmp_path / "ledger.csv"
+    write_ledger(ledger, [prediction_row("cancelled")])
+    before = ledger.read_bytes()
+    write_manifest(tmp_path / "data/live/event_manifests/card.csv", [{
+        "event_id": "ufc-test", "event_name": "UFC Test One", "event_date": "2026-08-01",
+        "fighter_a": "Beta Fighter", "fighter_b": "Alpha Fighter", "weight_class": "Lightweight",
+        "card_section": "prelims", "bout_order": 3, "fight_status": "cancelled",
+        "source": "official", "source_checked_at": "2026-07-01T00:00:00Z",
+    }])
+    payload = load_upcoming_predictions(dashboard_config(tmp_path, ledger))
+    assert payload["events"] == []
+    assert payload["diagnostics"]["excluded_row_count"] == 1
+    assert ledger.read_bytes() == before
+
+
+def test_missing_manifest_metadata_uses_safe_fallback(tmp_path):
+    ledger = tmp_path / "ledger.csv"
+    write_ledger(ledger, [prediction_row()])
+    fight = load_upcoming_predictions(dashboard_config(tmp_path, ledger))["events"][0]["fights"][0]
+    assert fight["card_section"] == "fight_card"
+    assert fight["card_section_label"] == "Fight Card"
+    assert fight["fight_status"] == "confirmed"
 
 
 def test_explicit_bout_order_is_preserved_when_available(tmp_path):
@@ -314,7 +377,10 @@ def test_static_frontend_is_served_with_required_states_and_components(tmp_path)
     assert "predicted_winner_side" in javascript
     assert "barA.style.width" in javascript and "barB.style.width" in javascript
     assert 'payload.events.forEach' in javascript
+    assert "Main Card" in javascript and "Prelims" in javascript and "Early Prelims" in javascript
+    assert "cardSections" in javascript
     assert ".fighter-name" in css and "overflow-wrap" in css
+    assert ".card-section-heading" in css
     assert "@media (max-width: 440px)" in css
 
 
@@ -334,4 +400,8 @@ def test_production_ufc329_rows_parse_without_mutation():
     assert payload["events"][0]["fight_count"] == 8
     assert payload["diagnostics"]["invalid_row_count"] == 0
     assert all(fight["weight_class"] for fight in payload["events"][0]["fights"])
+    assert [fight["card_section"] for fight in payload["events"][0]["fights"]] == [
+        "main_event", "main_card", "main_card", "main_card",
+        "prelims", "prelims", "early_prelims", "early_prelims",
+    ]
     assert hashlib.sha256(DEFAULT_LEDGER_PATH.read_bytes()).hexdigest() == before

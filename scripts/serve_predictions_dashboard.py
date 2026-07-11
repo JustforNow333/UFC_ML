@@ -9,6 +9,7 @@ import _path  # noqa: F401
 from ufc_pipeline.predictions_dashboard import (
     DEFAULT_FEATURE_ROOT,
     DEFAULT_LEDGER_PATH,
+    DEFAULT_MANIFEST_ROOT,
     DEFAULT_STATIC_DIR,
     REPO_ROOT,
     DashboardConfig,
@@ -22,6 +23,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--ledger", default=str(DEFAULT_LEDGER_PATH))
     parser.add_argument("--feature-root", default=str(DEFAULT_FEATURE_ROOT))
+    parser.add_argument("--manifest-root", default=str(DEFAULT_MANIFEST_ROOT))
     parser.add_argument("--static-dir", default=str(DEFAULT_STATIC_DIR))
     args = parser.parse_args()
 
@@ -29,6 +31,7 @@ def main() -> None:
     config = DashboardConfig(
         ledger_path=Path(args.ledger),
         feature_root=Path(args.feature_root),
+        manifest_root=Path(args.manifest_root),
         static_dir=Path(args.static_dir),
         repo_root=REPO_ROOT,
     )
