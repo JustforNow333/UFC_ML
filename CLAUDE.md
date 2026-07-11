@@ -468,7 +468,9 @@ benchmark still reproduces **0.641920** on the `date <= 2026-05-16` window. The
 uncommitted matchup-formula change remains WIP and was deliberately **not**
 promoted. 310 tests pass.
 
-There is deliberately **no betting logic, no odds as features, no UI**.
+There is deliberately **no betting logic and no odds as features**. A small
+read-only dashboard displays already-frozen Step 6B predictions; it cannot run
+inference, edit the ledger, or resolve results.
 
 ## Setup
 
@@ -559,6 +561,9 @@ There is deliberately **no betting logic, no odds as features, no UI**.
     --source-dir data/processed/rebuild_step6e_20260710_committed          # dry-run
 .venv/bin/python scripts/run_step6f_promote_processed.py \
     --source-dir data/processed/rebuild_step6e_20260710_committed --apply  # backup + promote
+# Read-only upcoming prediction dashboard + JSON API (no model run, no ledger writes)
+.venv/bin/python scripts/serve_predictions_dashboard.py
+# Open http://127.0.0.1:8000/ ; API: GET /api/predictions/upcoming
 ```
 
 ## Non-negotiable invariants
@@ -661,6 +666,7 @@ complete.
 | `ufc_pipeline/step6d2_guarded_db_apply.py` | Step 6D.2: one reviewed cached completed event → guarded insert-only plan/apply, backup, ambiguity/non-append blocks, optional Step 6C verification |
 | `ufc_pipeline/step6e_rebuild_processed.py` | Step 6E: non-destructive processed-feature rebuild from the updated DB — reuses the canonical Step 3/3B/3C builders into a separate dir (DB-read-only, md5-guarded), schema parity vs official Step 3C, new-event + future-exclusion verification, feature-quality + Step 6B-input + structural model-compat checks, JSON/MD report; never overwrites official processed files, benchmark, or model |
 | `ufc_pipeline/step6f_promote_processed.py` | Step 6F: guarded promotion of Step 6E rebuilt files to official `data/processed/` — dry-run default, explicit `--source-dir`, validate-before-touch (reuses Step 6E checkers), backup-before-overwrite, post-promotion re-verify + auto-rollback, manifest + rollback instructions; data-artifact only, never edits benchmark/model/DB |
+| `ufc_pipeline/predictions_dashboard.py` | Read-only upcoming-predictions ledger validation, grouping, confidence labels, weight-class enrichment, JSON endpoint, and explicit static routes; never imports or runs modeling code |
 | `benchmarks/official_baseline.json` | fixed official-model benchmark reference (never regenerate casually) |
 | `scripts/` | one CLI wrapper per pipeline stage |
 | `docs/greco_field_audit.md` | source-overlap rules (mdabbert vs Greco) |

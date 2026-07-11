@@ -22,6 +22,12 @@ dist/
 *.egg-info/
 pip-wheel-metadata/
 
+# Frontend dependencies and generated build artifacts
+node_modules/
+web/dist/
+web/.vite/
+web/.parcel-cache/
+
 # Local environments
 .venv/
 venv/

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Read-only official UFC model predictions for upcoming events.">
+  <title>Upcoming UFC Predictions</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="/" aria-label="UFC model predictions home">
+        <span class="brand-mark" aria-hidden="true">UF</span>
+        <span>
+          <strong>Fight Forecast</strong>
+          <small>Official model probabilities</small>
+        </span>
+      </a>
+      <span class="read-only-label">Read-only dashboard</span>
+    </div>
+  </header>
+
+  <main class="shell main-content">
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">Upcoming events</p>
+      <h1 id="page-title">Official fight predictions</h1>
+      <p class="hero-copy">
+        Frozen pre-fight probabilities from the production ledger. Results and live odds are not used here.
+      </p>
+    </section>
+
+    <div id="dashboard-status" class="status-panel" role="status" aria-live="polite" data-testid="dashboard-status">
+      <span class="loading-dot" aria-hidden="true"></span>
+      <span>Loading upcoming predictions…</span>
+    </div>
+
+    <div id="dashboard-warning" class="notice" hidden data-testid="dashboard-warning"></div>
+    <div id="events" class="events" aria-live="polite" data-testid="events"></div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      Probabilities are model estimates, not guarantees or betting recommendations.
+    </div>
+  </footer>
+</body>
+</html>

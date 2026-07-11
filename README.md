@@ -758,14 +758,77 @@ calibrated log loss/Brier/high-confidence gaps on the window, warnings),
 `CalibratedPipeline`; its `predict_proba` returns calibrated
 probabilities for future fights).
 
+## Read-only upcoming predictions dashboard
+
+The repository includes a dependency-free dashboard for official predictions
+already frozen by Step 6B. It does **not** run the model, generate predictions,
+or modify the production ledger. The server uses Python's standard library and
+binds to loopback by default.
+
+```bash
+.venv/bin/python scripts/serve_predictions_dashboard.py
+# Open http://127.0.0.1:8000/
+# Optional: --host 127.0.0.1 --port 8000
+```
+
+The same process serves the stable read-only endpoint:
+
+```text
+GET /api/predictions/upcoming
+```
+
+The endpoint rereads `data/live/live_predictions.csv` for every request, so a
+future event appears without frontend changes when valid unresolved rows are
+added to an official frozen Step 6B batch. A fight disappears when its ledger
+status is no longer `pending`, any resolution/scoring field is populated, or
+its event date is in the past. An empty upcoming ledger is a normal response:
+`{"events": []}`.
+
+### Ledger-to-API schema mapping
+
+| Dashboard field | Production source |
+|---|---|
+| fight ID | `prediction_id` |
+| batch ID | `prediction_batch_id` |
+| event/date | `event_name`, `event_date` |
+| fighters | `fighter_a`, `fighter_b` |
+| probabilities | `predicted_probability_a`, `predicted_probability_b` |
+| unresolved state | `status` plus blank target/result/resolution/scoring fields |
+| model metadata | `model_version`, `calibration_version` |
+| creation time | `prediction_timestamp_utc` |
+| weight class | `weight_class` when present; otherwise the safely confined feature CSV named by `input_source` |
+
+The current ledger has no `weight_class` column. The service may enrich that
+display field from an `input_source` CSV only when the resolved file remains
+under `data/live/features/`; arbitrary paths are never read. If no safe weight
+class is available, the card displays `UFC Bout`.
+
+Rows are displayable only when they are `live_forward`, unresolved, and their
+batch identifier marks them as both `official` and `frozen`. Fighter/event
+names must be present; probabilities must be numeric, finite, within `[0, 1]`,
+and complementary within `1e-6`. Malformed rows are logged and excluded, and
+the API exposes only a non-sensitive invalid-row count. The predicted winner
+and confidence label are derived on the backend from the stored probabilities:
+
+| Higher stored probability | Label |
+|---|---|
+| 50.0% to under 55.0% | Toss-up |
+| 55.0% to under 62.0% | Slight lean |
+| 62.0% to under 70.0% | Moderate confidence |
+| 70.0% to under 80.0% | High confidence |
+| 80.0% and above | Very high confidence |
+
+The frontend is static HTML/CSS/JavaScript served from the same origin. It
+formats the API's stored probabilities for display and never performs model
+inference or replacement probability calculations. For network deployment,
+keep the app behind a production reverse proxy and explicitly choose a bind
+address; the built-in server intentionally defaults to local access.
+
 ## Not a betting system (and not finished)
 
 This is an Elo baseline, a leak-free feature foundation, and a first,
 deliberately simple modeling pass. The logistic model is only as good as its
 margin over the Elo baseline on future fights.
 
-**Next stage (not implemented here):** style-matchup features (built with
-the same record-before-update discipline), rankings and betting odds as
-*benchmarks*, careful hyperparameter tuning, periodic re-fitting of the
-calibrator as new fights arrive, and eventually a small prediction app for
-upcoming cards.
+The dashboard is a display surface only. It has no accounts, administrative
+controls, odds, betting links, or ability to edit predictions.
