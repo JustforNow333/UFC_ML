@@ -61,6 +61,7 @@ STEP6A_REPORT_MD = "step6a_pseudo_live_replay.md"
 STEP6A_ROLLING_CSV = "step6a_rolling_metrics.csv"
 
 PREDICTION_MODE = "pseudo_live_replay"
+MISSING_EVENT_NAME = "(event name unavailable)"
 
 # Official model config (must match step5c_stronger_regularized_lr_drop_weight_class_platt).
 OFFICIAL_LR_PARAMS = {"penalty": "elasticnet", "C": 0.003, "l1_ratio": 0.1, "solver": "saga", "class_weight": None}
@@ -155,8 +156,11 @@ def iter_event_groups(df: pd.DataFrame):
 
     ``df`` is pre-sorted by (date, fight_id); ``groupby(sort=False)`` therefore
     yields events in first-appearance (chronological) order deterministically.
+    Event metadata is optional upstream, so null names are grouped under a
+    stable report label rather than silently dropped by pandas ``groupby``.
     """
-    for (event_date, event_name), event_df in df.groupby(["date", "event"], sort=False):
+    grouped = df.assign(event=df["event"].fillna(MISSING_EVENT_NAME))
+    for (event_date, event_name), event_df in grouped.groupby(["date", "event"], sort=False):
         yield event_date, event_name, event_df
 
 
@@ -331,10 +335,16 @@ def event_drift(event_df, training, base_numeric, elevated_threshold=0.10) -> di
     row_missing_frac = ev.isna().mean(axis=1)
     n_nan_heavy = int((row_missing_frac > 0.5).sum())
 
-    low_history = 0
-    for flag in LOW_HISTORY_FLAGS:
-        if flag in event_df.columns:
-            low_history += int(pd.to_numeric(event_df[flag], errors="coerce").fillna(0).astype(float).gt(0).sum())
+    low_history_flags = [
+        pd.to_numeric(event_df[flag], errors="coerce").fillna(0).astype(float).gt(0)
+        for flag in LOW_HISTORY_FLAGS
+        if flag in event_df.columns
+    ]
+    low_history = (
+        int(pd.concat(low_history_flags, axis=1).any(axis=1).sum())
+        if low_history_flags
+        else 0
+    )
 
     return {
         "n_rows": int(len(ev)),

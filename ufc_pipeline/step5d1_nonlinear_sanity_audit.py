@@ -396,10 +396,6 @@ def audit_row_feature_parity(base_numeric, train, calib, test, folds) -> dict:
 # 4. Calibration audit
 # ---------------------------------------------------------------------------
 
-def _calibration_window_metrics(entry_or_window) -> dict:
-    return entry_or_window
-
-
 def audit_calibration(candidate, base_numeric, folds, train, calib, test, random_state, max_iter, label) -> dict:
     """Uncal/Platt/isotonic {log loss, Brier, AUC} on validation folds and test."""
     fold_entries = [evaluate_candidate_on_fold(candidate, base_numeric, fold, random_state=random_state, max_iter=max_iter)

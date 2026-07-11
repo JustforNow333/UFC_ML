@@ -27,8 +27,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from ufc_pipeline.columns import name_key
 from ufc_pipeline.elo import DEFAULT_K, DEFAULT_STARTING_ELO, run_elo
-from ufc_pipeline.step6c_upcoming_feature_builder import normalize_fighter_name, run_build
+from ufc_pipeline.step6c_upcoming_feature_builder import run_build
 from ufc_pipeline.step6d_ufcstats_update_audit import (
     EVENT_DETAILS_RE,
     FIGHT_DETAILS_RE,
@@ -454,11 +455,12 @@ def _read_db_state(conn: sqlite3.Connection) -> dict:
         })
 
     fighters_by_name: dict[str, list[dict]] = {}
-    for fid, name, norm in conn.execute("SELECT fighter_id, name, normalized_name FROM fighters"):
-        fighters_by_name.setdefault(norm, []).append({
+    for fid, name, _norm in conn.execute("SELECT fighter_id, name, normalized_name FROM fighters"):
+        normalized_name = name_key(name)
+        fighters_by_name.setdefault(normalized_name, []).append({
             "fighter_id": int(fid),
             "name": name,
-            "normalized_name": norm,
+            "normalized_name": normalized_name,
         })
 
     event_keys = set()
@@ -498,7 +500,7 @@ def _resolve_fighter(fighter: dict, state: dict) -> dict:
     name = _clean_text(fighter.get("name"))
     url = _clean_text(fighter.get("url"))
     source_id = _clean_text(fighter.get("fighter_id"))
-    norm = normalize_fighter_name(name)
+    norm = name_key(name)
     if not name or not url or not source_id or not norm:
         return {
             "status": "blocked_missing_required_fields",

@@ -4,7 +4,8 @@ Checks UFCStats against the local ``data/ufc.db`` and reports what events,
 fights, fighters, and results look missing or stale — so a human can decide
 whether the history DB needs refreshing before Step 6C builds upcoming-card
 features. This step **never modifies the database**: it is a dry-run audit only.
-A guarded ``--apply`` writer is deliberately left for a future Step 6D.2.
+The separate Step 6D.2 command provides the narrow guarded cached-event apply
+after the audit output is reviewed.
 
 Scraping posture (conservative on purpose):
   * stdlib only (``urllib`` + ``html.parser``); no new dependencies, no
@@ -765,7 +766,7 @@ def run_audit(
         "recommended_next_action": _recommend(fetch_ok, blocked, comparison),
         "no_write_statement": (
             "This audit is READ-ONLY. It opened data/ufc.db in SQLite mode=ro and performed NO inserts, "
-            "updates, or deletes. Applying changes is deferred to a future, explicitly approved Step 6D.2."
+            "updates, or deletes. Any reviewed cached-event apply must use the separate Step 6D.2 command."
         ),
         "limitations": [
             "UFCStats serves a JavaScript browser-challenge to plain HTTP clients; this module does not bypass it. "
@@ -790,12 +791,12 @@ def _recommend(fetch_ok, blocked, comparison) -> str:
     if not fetch_ok:
         return ("No UFCStats HTML could be fetched (JS challenge / offline / no cache). Save the completed-events "
                 "page and event pages from a real browser into --cache-dir and re-run with --offline-cache-only, "
-                "then review before any future Step 6D.2 apply.")
+                "then review before using the separate Step 6D.2 apply command.")
     n_missing = len(comparison["missing_local_events"]) + len(comparison["missing_local_fights"])
     if n_missing == 0 and not comparison["stale_or_mismatched_results"]:
         return "Local DB appears current for the fetched range. No refresh needed now. No DB writes were made."
     return ("Local DB looks stale: review missing events/fights/fighters and any mismatched results below, then "
-            "consider a guarded Step 6D.2 apply (not implemented yet). No DB writes were made in this audit.")
+            "consider a guarded Step 6D.2 cached-event apply. No DB writes were made in this audit.")
 
 
 # ---------------------------------------------------------------------------
@@ -806,7 +807,7 @@ def _render_markdown(report: dict) -> str:
     lines = ["# Step 6D.1: UFCStats Data-Update Audit (read-only)", "",
              f"Generated: {report['generated_at']}", "",
              "**Read-only dry run.** No inserts/updates/deletes were performed on `data/ufc.db`. "
-             "A guarded apply is deferred to a future Step 6D.2.", ""]
+             "A separate Step 6D.2 command performs guarded cached-event applies.", ""]
     lines.append(f"- Local DB: `{report['local_db_path']}` — events {report['local_counts']['events']}, "
                  f"fights {report['local_counts']['fights']}, fighters {report['local_counts']['fighters']} "
                  f"({report['local_counts']['fighter_urls']} with stable UFCStats URLs)")

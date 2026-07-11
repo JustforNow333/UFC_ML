@@ -25,13 +25,16 @@ from ufc_pipeline.modeling import TARGET, check_features_allowed  # noqa: E402
 from ufc_pipeline.step5b_regularization_search import WEIGHT_CLASS_COLUMN  # noqa: E402
 from ufc_pipeline.step6a_pseudo_live_replay import (  # noqa: E402
     ID_DATE_COLUMNS,
+    MISSING_EVENT_NAME,
     OFFICIAL_LR_PARAMS,
     _row_brier,
     _row_log_loss,
     _window_metrics,
     build_replay_split,
     calibration_buckets,
+    event_drift,
     fit_official_model,
+    iter_event_groups,
     load_official_replay_config,
     model_classes,
     run_pseudo_live_replay,
@@ -111,6 +114,36 @@ def test_insufficient_history_returns_none():
     assert build_replay_split(df, early_event, min_train_fights=100, calibration_fights=60) is None
     # right at the boundary but not enough
     assert build_replay_split(df, "2015-01-15", min_train_fights=1000, calibration_fights=1000) is None
+
+
+def test_event_groups_retain_rows_with_missing_event_name():
+    df = pd.DataFrame(
+        {
+            "date": ["2020-01-01", "2020-01-08"],
+            "event": [np.nan, "UFC 2"],
+            "fight_id": [1, 2],
+        }
+    )
+
+    groups = list(iter_event_groups(df))
+
+    assert [(date, event, len(rows)) for date, event, rows in groups] == [
+        ("2020-01-01", MISSING_EVENT_NAME, 1),
+        ("2020-01-08", "UFC 2", 1),
+    ]
+
+
+def test_event_drift_counts_low_history_once_per_row():
+    base_numeric, _ = official_step3c_features()
+    training = pd.DataFrame({feature: [0.0, 0.0] for feature in base_numeric})
+    event = pd.DataFrame({feature: [0.0] for feature in base_numeric})
+    event.loc[0, "fighter_a_no_prior_stats"] = 1
+    event.loc[0, "fighter_b_no_prior_stats"] = 1
+    event.loc[0, "matchup_history_missing"] = 1
+
+    result = event_drift(event, training, base_numeric)
+
+    assert result["n_low_history_flagged_rows"] == 1
 
 
 # ---------------------------------------------------------------------------

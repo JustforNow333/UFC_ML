@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ufc_pipeline.db import init_schema
+from ufc_pipeline.columns import name_key
 from ufc_pipeline.step6c_upcoming_feature_builder import normalize_fighter_name
 from ufc_pipeline.step6d2_guarded_db_apply import (
     APPLY_SOURCE,
@@ -20,6 +21,7 @@ def _fighter_id(name: str) -> str:
         "Beta Fighter": "bbbbbbbbbbbbbbbb",
         "New Prospect": "cccccccccccccccc",
         "Second New": "dddddddddddddddd",
+        "Sean O'Malley": "eeeeeeeeeeeeeeee",
     }[name]
 
 
@@ -93,7 +95,7 @@ def _make_db(tmp_path: Path, fighters: list[tuple[int, str]], source_links: bool
     for fid, name in fighters:
         conn.execute(
             "INSERT INTO fighters (fighter_id, name, normalized_name, height, reach) VALUES (?, ?, ?, ?, ?)",
-            (fid, name, normalize_fighter_name(name), "180", "185"),
+            (fid, name, name_key(name), "180", "185"),
         )
         if source_links and name in ("Alpha Fighter", "Beta Fighter"):
             conn.execute(
@@ -217,6 +219,33 @@ def test_duplicate_apply_is_safely_skipped(tmp_path):
     }
 
 
+def test_apostrophe_name_uses_production_key_for_exact_fallback(tmp_path):
+    db = _make_db(tmp_path, [(1, "Sean O'Malley"), (2, "Beta Fighter")], source_links=False)
+    event = _write_event(tmp_path, _fight_row("f100", "Sean O'Malley", "Beta Fighter"))
+
+    report = run_cached_event_update(
+        str(db), str(event), output_dir=str(tmp_path / "reports"),
+        apply=True, run_step6c_verification=False,
+    )
+
+    assert report["apply_result"]["db_count_deltas"]["fighters"] == 0
+    resolution = next(
+        row for row in report["fighter_resolution"]
+        if row["source_fighter_id"] == _fighter_id("Sean O'Malley")
+    )
+    assert resolution["status"] == "existing_by_exact_name"
+    assert resolution["fighter_id"] == 1
+    conn = sqlite3.connect(db)
+    try:
+        stored_key = conn.execute(
+            "SELECT normalized_name FROM fighter_source_ids WHERE source_fighter_id = ?",
+            (_fighter_id("Sean O'Malley"),),
+        ).fetchone()[0]
+        assert stored_key == name_key("Sean O'Malley")
+    finally:
+        conn.close()
+
+
 def test_ambiguous_fighter_blocks_apply_without_backup(tmp_path):
     db = _make_db(
         tmp_path,
@@ -290,4 +319,3 @@ def test_mid_history_event_blocks_insert_only_elo_apply(tmp_path):
 
     assert plan["safe_to_apply"] is False
     assert any(block["type"] == "non_append_history" for block in plan["safety_blocks"])
-

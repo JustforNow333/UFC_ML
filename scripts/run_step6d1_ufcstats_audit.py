@@ -3,8 +3,9 @@
 
 Compares UFCStats (fetched live, or from a --cache-dir of saved HTML) against the
 local data/ufc.db and reports missing/stale events, fights, fighters, and
-results. It NEVER modifies the database — a guarded apply is deferred to a
-future Step 6D.2. No sportsbook odds, no prediction markets, no new heavy deps.
+results. It NEVER modifies the database; reviewed cached-event changes use the
+separate guarded Step 6D.2 command. No sportsbook odds, no prediction markets,
+no new heavy deps.
 
 UFCStats serves a JavaScript browser-challenge to plain HTTP clients; if a live
 fetch is blocked, save the pages from a real browser into --cache-dir and re-run

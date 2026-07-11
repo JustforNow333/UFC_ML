@@ -1,27 +1,26 @@
-"""Step 5A: feature diagnostics for the official Step 3C LR + Platt model.
+"""Step 5A: feature diagnostics for the current official Step 3C LR + Platt model.
 
 This module is DIAGNOSTICS-ONLY. It never changes the official model
 (``benchmarks/official_baseline.json`` is loaded as a read-only reference and
 is never regenerated here), never adds odds/market features, never trains a
 new model family, and never runs a hyperparameter search. It reuses the
 exact same chronological three-way split, the exact same
-``make_logistic_pipeline`` LR pipeline, and the exact same ``PlattCalibrator``
-that the official run uses (see ``ufc_pipeline/calibration.py``), so every
-number produced here is directly comparable to the official 0.6442 test log
-loss.
+elastic-net LR pipeline and the exact same ``PlattCalibrator`` that the
+official run uses (see ``ufc_pipeline/calibration.py``), so every number
+produced here is directly comparable to the current official benchmark.
 
 What it answers:
 
 1. Feature audit — what's a raw source column vs an engineered diff vs a
-   final model input, and how many one-hot columns the categorical feature
-   expands into.
+   final model input. Raw ``weight_class`` is explicitly excluded from the
+   current official model.
 2. Scaling audit — confirms (does not re-implement) that the pipeline's
    StandardScaler is fit on the train split only.
 3. Feature groups — a deterministic, exhaustive partition of the 43 numeric
-   + 1 categorical official Step 3C inputs into interpretable groups
+   official Step 3C inputs into interpretable groups
    (elo, physical, age, experience, recent_form, activity, striking_rolling,
    grappling_rolling, missing_flags, opponent_adjusted, matchup_style,
-   weight_class).
+   matchup_style).
 4. Ablations — fit/calibrate/evaluate LR+Platt on group subsets of the
    SAME chronological split used by the official run, so "does removing X
    help or hurt" is measured honestly on the held-out test window.
@@ -65,7 +64,6 @@ from ufc_pipeline.calibration import (
     clip_probabilities,
 )
 from ufc_pipeline.modeling import (
-    DEFAULT_CATEGORICAL_FEATURES,
     DEFAULT_NUMERIC_FEATURES,
     RANDOM_STATE,
     STEP3B_MODEL_FEATURES,
@@ -75,13 +73,25 @@ from ufc_pipeline.modeling import (
     coerce_numeric_features,
     evaluate_probs,
     extract_feature_names,
-    make_logistic_pipeline,
 )
 
 DEFAULT_BASELINE_PATH = "benchmarks/official_baseline.json"
 
 # Ablation log-loss differences smaller than this are treated as noise.
 NOISE_THRESHOLD = 0.002
+
+# Current official baseline, mirrored from benchmarks/official_baseline.json.
+# Keep this local rather than importing Step 5B at module import time: Step 5B
+# imports the feature-group helpers below.
+OFFICIAL_LR_PARAMS = {
+    "penalty": "elasticnet",
+    "C": 0.003,
+    "l1_ratio": 0.1,
+    "solver": "saga",
+    "class_weight": None,
+    "max_iter": 5000,
+}
+OFFICIAL_MODEL_LABEL = "stronger-regularized Step 3C LR, raw weight_class dropped + Platt"
 
 # ---------------------------------------------------------------------------
 # Feature groups: an exhaustive, deterministic partition of every official
@@ -144,12 +154,11 @@ FEATURE_GROUPS: dict[str, list[str]] = {
         "pace_pressure_advantage",
         "opponent_pressure_absorption_advantage",
     ],
-    "weight_class": ["weight_class"],
 }
 
 ALL_GROUPS: list[str] = list(FEATURE_GROUPS.keys())
 
-# Reverse lookup: numeric/categorical column name -> group name.
+# Reverse lookup: numeric model-input column name -> group name.
 COLUMN_TO_GROUP: dict[str, str] = {
     col: group for group, cols in FEATURE_GROUPS.items() for col in cols
 }
@@ -167,20 +176,23 @@ GROUP_REMOVAL_ABLATION = {
     "grappling_rolling": "all_minus_grappling_rolling",
     "matchup_style": "all_minus_matchup_style",
     "opponent_adjusted": "all_minus_opponent_adjusted",
-    "weight_class": "all_minus_weight_class",
     "missing_flags": "all_minus_missing_flags",
 }
 
 
 def official_step3c_features() -> tuple[list[str], list[str]]:
-    """The exact official Step 3C model inputs (numeric, categorical)."""
+    """The exact current official Step 3C inputs (numeric only).
+
+    The promoted official model intentionally drops raw ``weight_class``;
+    retaining it here would silently compare diagnostics from a historical
+    C=1 L2 model against the current elastic-net benchmark.
+    """
     numeric = (
         list(DEFAULT_NUMERIC_FEATURES)
         + list(STEP3B_MODEL_FEATURES)
         + list(STEP3C_MODEL_FEATURES)
     )
-    categorical = list(DEFAULT_CATEGORICAL_FEATURES)
-    return numeric, categorical
+    return numeric, []
 
 
 def get_feature_groups() -> dict[str, list[str]]:
@@ -217,8 +229,12 @@ def validate_feature_groups() -> None:
 
 
 def groups_to_columns(groups: list[str]) -> tuple[list[str], list[str]]:
-    """Resolve a list of group names to (numeric_cols, categorical_cols)."""
-    numeric: list[str] = []
+    """Resolve groups to current-official feature order.
+
+    Preserving the canonical input order matters for exact reproduction of the
+    official saga fit, while group membership still controls each ablation.
+    """
+    selected: set[str] = set()
     categorical: list[str] = []
     for group in groups:
         if group not in FEATURE_GROUPS:
@@ -226,11 +242,9 @@ def groups_to_columns(groups: list[str]) -> tuple[list[str], list[str]]:
                 f"Unknown feature group: {group!r}. Valid groups: "
                 f"{sorted(FEATURE_GROUPS)}"
             )
-        cols = FEATURE_GROUPS[group]
-        if group == "weight_class":
-            categorical.extend(cols)
-        else:
-            numeric.extend(cols)
+        selected.update(FEATURE_GROUPS[group])
+    official_numeric, _ = official_step3c_features()
+    numeric = [feature for feature in official_numeric if feature in selected]
     return numeric, categorical
 
 
@@ -241,8 +255,8 @@ def _build_ablations() -> dict[str, list[str]]:
     return {
         "all": list(ALL_GROUPS),
         "only_elo": ["elo"],
-        "only_elo_plus_basic": ["elo", "physical", "age", "weight_class"],
-        "only_basic_age_experience": ["physical", "age", "experience", "weight_class"],
+        "only_elo_plus_basic": ["elo", "physical", "age"],
+        "only_basic_age_experience": ["physical", "age", "experience"],
         "only_rolling_stats": ["striking_rolling", "grappling_rolling", "missing_flags"],
         "only_striking_rolling": ["striking_rolling", "missing_flags"],
         "only_grappling_rolling": ["grappling_rolling", "missing_flags"],
@@ -259,7 +273,6 @@ def _build_ablations() -> dict[str, list[str]]:
         "all_minus_matchup_style": minus("matchup_style"),
         "all_minus_opponent_adjusted": minus("opponent_adjusted"),
         "all_minus_matchup_and_opponent": minus("matchup_style", "opponent_adjusted"),
-        "all_minus_weight_class": minus("weight_class"),
         "all_minus_missing_flags": minus("missing_flags"),
     }
 
@@ -285,12 +298,14 @@ def feature_audit(df: pd.DataFrame, numeric: list[str], categorical: list[str]) 
          "fighter_a_expected_win_prob", "fighter_b_expected_win_prob"]
         if c in df.columns
     ]
+    raw_weight_class_excluded = ["weight_class"] if "weight_class" in df.columns else []
     excluded_other = [
         c for c in df.columns
         if c not in model_columns
         and c != TARGET
         and c not in identifier_metadata
         and c not in elo_probability_columns
+        and c not in raw_weight_class_excluded
     ]
     raw_per_fighter_intermediate = sorted(
         c for c in excluded_other if c.startswith("fighter_a_") or c.startswith("fighter_b_")
@@ -308,11 +323,12 @@ def feature_audit(df: pd.DataFrame, numeric: list[str], categorical: list[str]) 
             "DEFAULT_NUMERIC_FEATURES (13, Step 3) + STEP3B_MODEL_FEATURES "
             "(13, rolling striking/grappling + missing flags) + "
             "STEP3C_MODEL_FEATURES (17, matchup interactions + opponent-adjusted "
-            "rolling stats) + weight_class (categorical)"
+            "rolling stats); raw weight_class is dropped"
         ),
         "columns_in_csv_total": int(len(df.columns)),
         "identifier_and_metadata_columns_excluded": identifier_metadata,
         "elo_and_probability_columns_excluded_from_features": elo_probability_columns,
+        "raw_weight_class_excluded_from_features": raw_weight_class_excluded,
         "raw_per_fighter_intermediate_columns_excluded": raw_per_fighter_intermediate,
         "other_unused_columns": other_unused,
         "raw_vs_engineered_vs_final": {
@@ -327,11 +343,35 @@ def feature_audit(df: pd.DataFrame, numeric: list[str], categorical: list[str]) 
                 "raw per-fighter values -- these ARE the final model numeric features."
             ),
             "final_model": (
-                "numeric_features + categorical_features above; identical to the official "
-                "Step 3C LR input set."
+                "numeric_features above; identical to the current official Step 3C "
+                "LR input set."
             ),
         },
     }
+
+
+def make_official_step3c_pipeline(numeric: list[str]):
+    """Build the current official LR pipeline without reintroducing weight_class.
+
+    Step 5B owns the parameterized pipeline factory. Importing it lazily avoids
+    a module-import cycle because that module imports this module's feature
+    catalog. The returned pipeline has the same train-only imputer/scaler and
+    elastic-net configuration as the benchmarked official model.
+    """
+    from ufc_pipeline.step5b_regularization_search import make_step5b_pipeline
+
+    return make_step5b_pipeline(
+        numeric=list(numeric),
+        include_weight_class=False,
+        weight_class_categories=None,
+        penalty=OFFICIAL_LR_PARAMS["penalty"],
+        C=OFFICIAL_LR_PARAMS["C"],
+        l1_ratio=OFFICIAL_LR_PARAMS["l1_ratio"],
+        solver=OFFICIAL_LR_PARAMS["solver"],
+        max_iter=OFFICIAL_LR_PARAMS["max_iter"],
+        class_weight=OFFICIAL_LR_PARAMS["class_weight"],
+        random_state=RANDOM_STATE,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +459,7 @@ def run_single_ablation(
     cols = numeric + categorical
     check_features_allowed(numeric + categorical)  # leakage guard before every fit
 
-    pipeline = make_logistic_pipeline(numeric, categorical)
+    pipeline = make_official_step3c_pipeline(numeric)
     pipeline.fit(train[cols], y_train)
     calib_probs = pipeline.predict_proba(calib[cols])[:, 1]
     test_probs = pipeline.predict_proba(test[cols])[:, 1]
@@ -452,6 +492,7 @@ def run_single_ablation(
         "platt": platt,
         "numeric": numeric,
         "categorical": categorical,
+        "official_model_params": dict(OFFICIAL_LR_PARAMS),
     }
     return entry, artifacts
 
@@ -670,6 +711,11 @@ def leakage_checks(
         ),
     }
 
+    checks["raw_weight_class_dropped"] = {
+        "status": "pass" if "weight_class" not in features else "fail",
+        "detail": "raw weight_class is excluded from the current official model inputs.",
+    }
+
     train_ids, calib_ids, test_ids = set(train["fight_id"]), set(calib["fight_id"]), set(test["fight_id"])
     disjoint = not (train_ids & calib_ids) and not (calib_ids & test_ids) and not (train_ids & test_ids)
     chrono_ok = (train["date"].max() <= calib["date"].min()) and (calib["date"].max() <= test["date"].min())
@@ -801,8 +847,8 @@ def run_feature_diagnostics(
 ) -> dict:
     """Full Step 5A diagnostics run. Returns the report dict (also written to disk).
 
-    Reuses chronological_three_way_split / make_logistic_pipeline /
-    PlattCalibrator / check_features_allowed / coerce_numeric_features from
+    Reuses chronological_three_way_split / the official Step 5B elastic-net
+    pipeline / PlattCalibrator / check_features_allowed / coerce_numeric_features from
     the existing modeling/calibration modules; adds no new model families and
     changes nothing under data/processed/ or benchmarks/.
     """
@@ -978,7 +1024,7 @@ def _build_verdict(
         )
     else:
         summary = (
-            "No ablation beat the official 0.6442 test log loss by more than the "
+            "No ablation beat the current official test log loss by more than the "
             f"{NOISE_THRESHOLD} noise threshold; the full Step 3C feature set remains "
             "the best-performing configuration found here."
         )
@@ -993,33 +1039,29 @@ def _build_verdict(
         "summary": summary,
         "most_valuable_groups": most_valuable,
         "least_valuable_or_harmful_groups": least_valuable,
-        "keep_step3c_lr_platt_official": True,
-        "keep_step3c_lr_platt_official_rationale": (
+        "keep_current_official_model": True,
+        "keep_current_official_model_rationale": (
             "This is a diagnostics-only run; it never changes the official model "
-            "regardless of ablation results. Recommend staying with Step 3C LR + "
-            "Platt unless a future run finds a clear (> noise threshold), "
+            "regardless of ablation results. Recommend staying with the current "
+            "stronger-regularized Step 3C LR + Platt unless a future run finds a "
+            "clear (> noise threshold), "
             "reproduced improvement."
         ),
-        "run2_recommendation": _run2_recommendation(groups_helpful, groups_harmful),
+        "next_step_recommendation": _diagnostic_recommendation(groups_helpful, groups_harmful),
     }
 
 
-def _run2_recommendation(groups_helpful: list[dict], groups_harmful: list[dict]) -> str:
+def _diagnostic_recommendation(groups_helpful: list[dict], groups_harmful: list[dict]) -> str:
     if groups_harmful:
         harmful_names = ", ".join(g["group"] for g in groups_harmful)
         return (
-            f"Focus Run 2 on feature removal / regularization: {harmful_names} "
-            "showed no held-out benefit (or a slight harm) when removed, so try "
-            "L1/L2 regularization strength sweeps (still no new model families) or "
-            "dropping those groups to simplify the model without hurting log loss. "
-            "Only after that, consider new interaction features for the groups "
-            "that classified as helpful."
+            f"Treat {harmful_names} as diagnostic leads only. Any feature change "
+            "must be selected on a fresh, validation-only protocol before it can "
+            "challenge the current official model."
         )
     return (
-        "All groups classified as helpful or neutral within noise; Run 2 should "
-        "focus on regularization strength (fewer effective parameters) and on new "
-        "interaction features building on the currently most valuable groups, "
-        "rather than removing existing groups."
+        "These ablations are diagnostics only. Preserve the current official model "
+        "unless a future validation-only experiment establishes a clear improvement."
     )
 
 
@@ -1043,14 +1085,14 @@ def _render_markdown(report: dict) -> str:
     lines.append("## Headline")
     lines.append("")
     lines.append(
-        f"- Official Step 3C LR + Platt held-out test log loss: **{official['log_loss']:.4f}** "
+        f"- Official {OFFICIAL_MODEL_LABEL} held-out test log loss: **{official['log_loss']:.4f}** "
         f"(Brier {official['brier_score']:.4f}, AUC {official['roc_auc']:.4f}, "
         f"accuracy {official['accuracy']:.4f})"
     )
     lines.append(f"- {report['verdict']['summary']}")
     lines.append(
-        f"- Keep Step 3C LR + Platt official: "
-        f"{'YES' if report['verdict']['keep_step3c_lr_platt_official'] else 'NO'}"
+        f"- Keep current official model: "
+        f"{'YES' if report['verdict']['keep_current_official_model'] else 'NO'}"
     )
     lines.append("")
 
@@ -1098,15 +1140,6 @@ def _render_markdown(report: dict) -> str:
 
     lines.append("## Top coefficients (standardized for numeric features)")
     lines.append("")
-    lines.append(
-        "Note: one-hot `weight_class_*` coefficients are NOT standardized (only "
-        "numeric features pass through the pipeline's StandardScaler) and are "
-        "therefore not directly comparable in magnitude to the standardized "
-        "numeric coefficients below -- e.g. `weight_class_Open Weight`'s large "
-        "coefficient reflects a rare category (101/8547 rows), not necessarily a "
-        "strong or reliable effect."
-    )
-    lines.append("")
     lines.append("Top positive:")
     for row in report["top_positive_coefficients"][:15]:
         lines.append(f"- {row['feature']} ({row['group']}): {row['coefficient']:+.4f}")
@@ -1150,9 +1183,9 @@ def _render_markdown(report: dict) -> str:
         lines.append(f"- {item}")
     lines.append("")
 
-    lines.append("## Recommended next step (Run 2)")
+    lines.append("## Interpretation")
     lines.append("")
-    lines.append(report["verdict"]["run2_recommendation"])
+    lines.append(report["verdict"]["next_step_recommendation"])
     lines.append("")
 
     return "\n".join(lines)

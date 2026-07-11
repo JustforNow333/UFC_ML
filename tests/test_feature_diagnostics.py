@@ -35,6 +35,7 @@ from ufc_pipeline.calibration import (  # noqa: E402
 from ufc_pipeline.feature_diagnostics import (  # noqa: E402
     FEATURE_GROUPS,
     NOISE_THRESHOLD,
+    OFFICIAL_LR_PARAMS,
     build_coefficient_report,
     check_features_allowed,
     classify_group_effects,
@@ -44,18 +45,19 @@ from ufc_pipeline.feature_diagnostics import (  # noqa: E402
     permutation_importance_report,
     run_ablation_suite,
     run_feature_diagnostics,
+    make_official_step3c_pipeline,
     run_single_ablation,
     scaling_audit,
     validate_feature_groups,
 )
-from ufc_pipeline.modeling import TARGET, make_logistic_pipeline  # noqa: E402
+from ufc_pipeline.modeling import TARGET  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = REPO_ROOT / "benchmarks" / "official_baseline.json"
 
 
 def synthetic_step3c_features(n: int = 300, seed: int = 0) -> pd.DataFrame:
-    """A full-width (43 numeric + weight_class) synthetic Step 3C-shaped
+    """A full-width current-official (43 numeric, no raw weight_class) shaped
     dataset, with real signal in elo_diff and a deliberate distribution
     shift in a couple of columns across eras (used by the scaling-audit
     test to prove train-only stats differ from full-dataset stats)."""
@@ -97,7 +99,7 @@ def synthetic_step3c_features(n: int = 300, seed: int = 0) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     assert set(numeric_all).issubset(df.columns)
-    assert set(categorical_all).issubset(df.columns)
+    assert categorical_all == []
     return df
 
 
@@ -162,6 +164,28 @@ def test_ablation_runner_schema():
     assert helpful == [] and harmful == [] and neutral == []
 
 
+def test_all_ablation_uses_current_official_elasticnet_without_weight_class():
+    df = synthetic_step3c_features(300)
+    train, calib, test = chronological_three_way_split(df, train_frac=0.70, calibration_frac=0.15)
+    y_train = train[TARGET].astype(int).to_numpy()
+    y_calib = calib[TARGET].astype(int).to_numpy()
+    y_test = test[TARGET].astype(int).to_numpy()
+
+    _entry, artifacts = run_single_ablation(
+        "all", list(FEATURE_GROUPS), train, calib, test,
+        y_train, y_calib, y_test, _official_log_loss(),
+    )
+
+    model = artifacts["pipeline"].named_steps["model"]
+    assert artifacts["numeric"] == official_step3c_features()[0]
+    assert artifacts["categorical"] == []
+    assert "weight_class" not in artifacts["numeric"]
+    assert model.penalty == OFFICIAL_LR_PARAMS["penalty"]
+    assert model.C == pytest.approx(OFFICIAL_LR_PARAMS["C"])
+    assert model.l1_ratio == pytest.approx(OFFICIAL_LR_PARAMS["l1_ratio"])
+    assert model.solver == OFFICIAL_LR_PARAMS["solver"]
+
+
 # --------------------------------------------------------------------- 3
 def test_ablation_runner_raises_for_unknown_group():
     df = synthetic_step3c_features(200)
@@ -181,7 +205,7 @@ def test_scaler_fit_on_train_only():
     numeric, categorical = official_step3c_features()
     train, calib, test = chronological_three_way_split(df, train_frac=0.70, calibration_frac=0.15)
 
-    pipeline = make_logistic_pipeline(numeric, categorical)
+    pipeline = make_official_step3c_pipeline(numeric)
     pipeline.fit(train[numeric + categorical], train[TARGET].astype(int))
 
     result = scaling_audit(pipeline, train, pd.concat([train, calib, test]), numeric)
@@ -281,7 +305,7 @@ def test_coefficient_report_schema():
     df = synthetic_step3c_features(300)
     numeric, categorical = official_step3c_features()
     train, calib, test = chronological_three_way_split(df, train_frac=0.70, calibration_frac=0.15)
-    pipeline = make_logistic_pipeline(numeric, categorical)
+    pipeline = make_official_step3c_pipeline(numeric)
     pipeline.fit(train[numeric + categorical], train[TARGET].astype(int))
 
     coef_df = build_coefficient_report(pipeline, numeric, categorical)
@@ -298,9 +322,7 @@ def test_coefficient_report_schema():
     assert set(numeric_rows["feature"]) == set(numeric)
     assert numeric_rows["scaler_mean"].notna().all()
 
-    onehot_rows = coef_df[coef_df["feature_type"] == "one_hot"]
-    assert (onehot_rows["group"] == "weight_class").all()
-    assert onehot_rows["scaler_mean"].isna().all()
+    assert coef_df[coef_df["feature_type"] == "one_hot"].empty
 
 
 # --------------------------------------------------------------------- 9
@@ -381,6 +403,10 @@ def test_permutation_importance_sign_and_no_mutation():
     """Permuting a strong known signal (elo_diff) increases test log loss;
     the caller's test dataframe must come back unchanged."""
     df = synthetic_step3c_features(400)
+    # The promoted C=0.003 elastic-net model deliberately shrinks weak signal
+    # to zero. Make this fixture's single feature unambiguously predictive so
+    # this remains a test of permutation importance, not regularization.
+    df[TARGET] = (df["elo_diff"] > 0).astype(int)
     official_ll = _official_log_loss()
     train, calib, test = chronological_three_way_split(df, train_frac=0.70, calibration_frac=0.15)
     y_train = train[TARGET].astype(int).to_numpy()

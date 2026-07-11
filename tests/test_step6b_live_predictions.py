@@ -35,6 +35,7 @@ from ufc_pipeline.step6b_live_predictions import (  # noqa: E402
     resolve_predictions,
     run_live_predictions,
     run_resolution,
+    train_official_model,
     validate_prediction_input,
 )
 
@@ -260,6 +261,61 @@ def test_official_model_config_loaded_and_weight_class_dropped():
     assert cfg["model_version"] == "step5c_stronger_regularized_lr_drop_weight_class_platt"
 
 
+def test_official_model_config_rejects_missing_baseline(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Official baseline file not found"):
+        load_official_model_config(str(tmp_path / "missing.json"))
+
+
+def _write_test_baseline(path: Path, frame: pd.DataFrame, n_train=42, n_calibration=9, n_test=9) -> None:
+    frozen = frame.iloc[:n_train + n_calibration + n_test]
+    train = frozen.iloc[:n_train]
+    calibration = frozen.iloc[n_train:n_train + n_calibration]
+    test = frozen.iloc[n_train + n_calibration:]
+    baseline = json.loads(BASELINE_PATH.read_text())
+    baseline["official_model"]["split"] = {
+        "n_train": n_train,
+        "n_calibration": n_calibration,
+        "n_test": n_test,
+        "train_dates": [str(train["date"].min()), str(train["date"].max())],
+        "calibration_dates": [str(calibration["date"].min()), str(calibration["date"].max())],
+        "test_dates": [str(test["date"].min()), str(test["date"].max())],
+    }
+    path.write_text(json.dumps(baseline))
+
+
+def test_official_training_split_does_not_move_when_processed_data_grows(tmp_path):
+    training_csv = tmp_path / "training.csv"
+    write_training_csv(training_csv, n=70)
+    frame = pd.read_csv(training_csv).sort_values(["date", "fight_id"]).reset_index(drop=True)
+    baseline_path = tmp_path / "baseline.json"
+    _write_test_baseline(baseline_path, frame)
+
+    trained = train_official_model(
+        str(training_csv), baseline_path=str(baseline_path), max_iter=800,
+    )
+    metadata = trained["training_metadata"]
+    assert metadata["source_rows"] == 70
+    assert metadata["benchmark_rows"] == 60
+    assert metadata["excluded_post_benchmark_rows"] == 10
+    assert metadata["train_rows"] == 42
+    assert metadata["calibration_rows"] == 9
+    assert metadata["split_source"] == "locked_official_baseline"
+    assert trained["calibration_version"] == "platt_official_calib9"
+
+
+def test_official_training_split_rejects_changed_frozen_window(tmp_path):
+    training_csv = tmp_path / "training.csv"
+    write_training_csv(training_csv, n=70)
+    frame = pd.read_csv(training_csv).sort_values(["date", "fight_id"]).reset_index(drop=True)
+    baseline_path = tmp_path / "baseline.json"
+    _write_test_baseline(baseline_path, frame)
+    changed = frame.drop(index=10).reset_index(drop=True)
+    changed.to_csv(training_csv, index=False)
+
+    with pytest.raises(ValueError, match="no longer matches its locked split"):
+        train_official_model(str(training_csv), baseline_path=str(baseline_path), max_iter=800)
+
+
 # ---------------------------------------------------------------------------
 # Live model report schema + small-sample warnings (fabricated resolved ledger)
 # ---------------------------------------------------------------------------
@@ -322,7 +378,7 @@ def e2e(tmp_path_factory):
     ledger = tmp / "data" / "live" / "live_predictions.csv"
     outdir = tmp / "reports" / "live"
     report = run_live_predictions(str(card), ledger_path=str(ledger), output_dir=str(outdir),
-                                  training_data=str(tcsv), baseline_path=str(BASELINE_PATH),
+                                  training_data=str(tcsv), baseline_path=None,
                                   prediction_batch_id="E2E", max_iter=800)
     return report, tmp, ledger, outdir, tcsv
 

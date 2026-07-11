@@ -151,13 +151,17 @@ def validate_matchup_schema(df: pd.DataFrame, event_date_override: str | None = 
     forbidden = sorted(FORBIDDEN_OUTPUT_COLUMNS & columns)
 
     row_status = []
-    seen = {}
+    seen_matchups = {}
     for idx, row in df.iterrows():
         reasons = []
         ev = event_date_override if event_date_override is not None else row.get("event_date")
+        event_date = None
         try:
-            pd.to_datetime(ev)
-        except (ValueError, TypeError):
+            parsed_event_date = pd.to_datetime(ev)
+            if pd.isna(parsed_event_date):
+                raise ValueError("event_date is null")
+            event_date = str(parsed_event_date.date())
+        except (AttributeError, ValueError, TypeError):
             reasons.append("unparseable event_date")
         fa = normalize_fighter_name(row.get("fighter_a"))
         fb = normalize_fighter_name(row.get("fighter_b"))
@@ -167,10 +171,14 @@ def validate_matchup_schema(df: pd.DataFrame, event_date_override: str | None = 
             reasons.append("empty fighter_b")
         if fa and fb and fa == fb:
             reasons.append("fighter_a equals fighter_b")
-        key = (str(ev), frozenset({fa, fb}))
-        if fa and fb and key in seen:
-            reasons.append(f"duplicate matchup (also row {seen[key]})")
-        seen.setdefault(key, idx)
+
+        if event_date and fa and fb and fa != fb:
+            matchup_key = (event_date, frozenset({fa, fb}))
+            if matchup_key in seen_matchups:
+                reasons.append(f"duplicate matchup (also row {seen_matchups[matchup_key]})")
+
+            if not reasons:
+                seen_matchups[matchup_key] = idx
         row_status.append({"row_index": int(idx), "status": "error" if reasons else "valid", "reasons": reasons})
 
     return {
@@ -268,12 +276,14 @@ def build_upcoming_features(
 
     # Resolve each matchup: event date, both fighters. Group buildable ones by date.
     resolved, match_review, failed = [], [], []
+    seen_resolved_fighters: dict[tuple[str, int], int] = {}
     for idx, row in matchups_df.iterrows():
         rs = schema["row_status"][idx]
         raw_event_date = event_date_override if event_date_override is not None else row.get("event_date")
         try:
-            event_date = str(pd.to_datetime(raw_event_date).date())
-        except (ValueError, TypeError):
+            parsed_event_date = pd.to_datetime(raw_event_date)
+            event_date = "" if pd.isna(parsed_event_date) else str(parsed_event_date.date())
+        except (AttributeError, ValueError, TypeError):
             event_date = "" if raw_event_date is None else str(raw_event_date)
         event_name = row.get("event_name")
         weight_class = row.get("weight_class") if "weight_class" in matchups_df.columns else None
@@ -293,11 +303,21 @@ def build_upcoming_features(
             reasons.append(f"fighter_a {ma['status']}: {ma['detail']}")
         if mb["status"] != "matched":
             reasons.append(f"fighter_b {mb['status']}: {mb['detail']}")
+        if not reasons:
+            for side, match in (("fighter_a", ma), ("fighter_b", mb)):
+                fighter_key = (event_date, int(match["fighter_id"]))
+                if fighter_key in seen_resolved_fighters:
+                    reasons.append(
+                        f"{side} appears in multiple matchups on {event_date} "
+                        f"(also row {seen_resolved_fighters[fighter_key]})"
+                    )
         if reasons:
             failed.append({"row_index": int(idx), "event_date": event_date, "event_name": event_name,
                            "input_fighter_a": row.get("fighter_a"), "input_fighter_b": row.get("fighter_b"),
                            "reasons": reasons})
             continue
+        seen_resolved_fighters[(event_date, int(ma["fighter_id"]))] = int(idx)
+        seen_resolved_fighters[(event_date, int(mb["fighter_id"]))] = int(idx)
         resolved.append({"row_index": int(idx), "event_date": event_date, "event_name": event_name,
                          "weight_class": weight_class, "a": ma, "b": mb})
 

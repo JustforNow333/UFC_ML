@@ -3,6 +3,10 @@
 Guidance for Claude Code when working in this repository. `agents.md` holds
 the same core rules; keep the two files in sync when either changes.
 
+## Pre-task instructions
+
+- Before performing any task, read the repository's applicable Markdown instruction files, including `agents.md` and `CLAUDE.md`, and follow their current guidance.
+
 ## What this project is
 
 A UFC fight prediction ML pipeline built in deliberate stages, all feeding a
@@ -21,7 +25,8 @@ central SQLite database (`data/ufc.db`):
 4. **Step 3 features** — time-safe pre-fight features: record, recent form,
    physical diffs (`ufc_pipeline/features.py`).
 5. **Step 3B features** — rolling striking/grappling rates over *previous*
-   fights only (`ufc_pipeline/stats_features.py`).
+   complete-stat fights only (`ufc_pipeline/stats_features.py`); absent or
+   partial source totals remain missing rather than becoming zero performance.
 6. **Step 3C features** — style-matchup interactions + rolling "against"
    stats (`ufc_pipeline/matchup_features.py`). Positive matchup value =
    fighter A advantage, always. Same record-before-update discipline.
@@ -32,9 +37,10 @@ central SQLite database (`data/ufc.db`):
    and *live* (rolling recent window, default 730 days, refits Platt for
    future predictions; diagnostics only, no held-out test).
 9. **Feature diagnostics (Step 5A)** — `ufc_pipeline/feature_diagnostics.py`:
-   feature/scaling audit, feature-group ablations on the official 3-way
-   split, standardized coefficients, permutation importance, leakage
-   checks. Diagnostics only — it never changes the official model. Reports
+   feature/scaling audit, feature-group ablations of the current official
+   numeric-only elastic-net LR + Platt configuration on the official 3-way
+   split, standardized coefficients, permutation importance, leakage checks.
+   Diagnostics only — it never changes the official model. Reports
    go to `reports/` (`step5a_feature_diagnostics.{json,md}`,
    `step5a_coefficients.csv`).
 10. **Regularization + pruning search (Step 5B)** —
@@ -146,8 +152,9 @@ central SQLite database (`data/ufc.db`):
    features would be — verified to match the processed file to `|Δ|=0.0`.
    Fighter names are matched deterministically (accent/punct-normalized, exact
    only); unmatched or ambiguous names become reported failed rows, never
-   guessed; debut/low-history fighters get training's null policy +
-   `no_prior_stats` flags. Output goes to `data/live/` (or an explicit `--output`)
+   guessed; a fighter can appear in only one matchup per event date; debut/
+   low-history fighters get training's null policy + `no_prior_stats` flags.
+   Output goes to `data/live/` (or an explicit `--output`)
    and a build report to `reports/live/step6c_feature_build_<ts>.{json,md}`; it
    validates the output against Step 6B and refuses to write an invalid file. It
    does NOT scrape and adds no odds/markets; it reads the existing history DB
@@ -157,8 +164,7 @@ central SQLite database (`data/ufc.db`):
    that checks UFCStats against `data/ufc.db` and reports what events, fights,
    fighters, and results look missing or stale (so a human can decide whether the
    history DB — which Step 6C depends on — needs refreshing). **It never writes
-   the DB** (opens it SQLite `mode=ro`); a guarded apply is deferred to a future
-   Step 6D.2. Stdlib-only scraping (`urllib` + `html.parser`, no new deps), a
+   the DB** (opens it SQLite `mode=ro`). Stdlib-only scraping (`urllib` + `html.parser`, no new deps), a
    polite delay + `--max-events` cap, an on-disk HTML cache (`--cache-dir`) and
    `--offline-cache-only` mode. Matching prefers stable UFCStats fighter URLs
    (already stored in `fighter_source_ids`), falls back to exact normalized name
@@ -167,6 +173,61 @@ central SQLite database (`data/ufc.db`):
    **detects it and degrades gracefully**, telling the user to supply cached HTML
    (saved from a real browser) — it does not try to defeat the challenge. Reports
    go to `reports/data_update/step6d1_ufcstats_audit.{json,md}`. No odds/markets.
+19. **Guarded cached-event apply (Step 6D.2)** —
+   `ufc_pipeline/step6d2_guarded_db_apply.py`: narrow insert-only application
+   of one browser-saved completed UFCStats event. Dry-run is the default and
+   opens the DB read-only; `--apply` creates a timestamped backup before a
+   transaction. It blocks ambiguous identities and non-append history, never
+   scrapes, updates, or deletes existing rows, and can run a post-apply Step 6C
+   smoke verification. It writes reports under `reports/data_update/`, never
+   `data/processed/` or the benchmark.
+20. **Controlled processed-feature rebuild (Step 6E)** —
+   `ufc_pipeline/step6e_rebuild_processed.py`: after a Step 6D.2 apply changes
+   `data/ufc.db`, this regenerates the Step 3 / 3B / 3C processed feature CSVs
+   from the current DB **into a separate output directory** and verifies them —
+   it never overwrites the official `data/processed/` files, never edits
+   `benchmarks/official_baseline.json`, never retrains/replaces/promotes a
+   model, and never writes `data/ufc.db` (it reuses the canonical
+   `features`/`stats_features`/`matchup_features` builders, which are DB-read-
+   only, and brackets the run with a DB md5 before/after assertion; Elo is read
+   from the snapshots Step 6D.2 already inserted, so `build_elo_for_db` is *not*
+   called). It runs schema-parity vs the official Step 3C file (row/column
+   diff, all 43 features present, raw `weight_class` still label-only), new-event
+   verification (expected events present with correct counts, future-dated cards
+   absent, no duplicate/leakage rows), feature-quality checks (missingness,
+   infinities, dupes, date ordering, target distribution, debut/low-history
+   flags), a Step 6B input-validation check on the rebuilt new-event rows, and
+   an optional **structural-only** official-model compatibility check
+   (reproduces the locked official model from the *old* official CSV and scores
+   rebuilt rows — reports no held-out metrics, promotes nothing). Reports go to
+   `reports/data_update/step6e/step6e_rebuild_report.{json,md}`. The
+   non-destructive guard is absolute: it refuses any output path equal to an
+   official processed file and won't clobber a prior rebuild without
+   `--overwrite-rebuild`. **Caveat learned in Step 6F:** the rebuild uses the
+   *working-tree* feature builders, so if `matchup_features.py`/`stats_features.py`
+   have uncommitted formula edits the rebuilt files silently reflect them (not
+   just the DB delta). For a *data-only* rebuild/promotion, run the builders at
+   their committed versions.
+21. **Guarded promotion of rebuilt processed files (Step 6F)** —
+   `ufc_pipeline/step6f_promote_processed.py`: promotes the Step 6E rebuilt
+   Step 3/3B/3C CSVs into the official `data/processed/` paths — a **data
+   artifact** promotion only (no retrain/replace/promote of a model, never edits
+   `benchmarks/official_baseline.json`, never touches `data/ufc.db`, no
+   UFCStats/odds). Dry-run by default; `--apply` required. Guards: requires an
+   explicit `--source-dir`; **validates the source before touching anything**
+   (schema parity vs current official Step 3C, expected new events present with
+   correct counts, future cards absent, no duplicate/leakage rows, no
+   infinities, Step 6B input validation — reuses the Step 6E checkers) and
+   aborts (no backup, no copy) if validation fails; on `--apply` copies the
+   current official files into
+   `data/processed/backups/pre_step6f_promotion_<UTC-stamp>/` **before** any
+   overwrite; re-verifies afterward (each official file byte-equals its source,
+   row count/max date correct, DB+benchmark md5 unchanged) and **auto-rolls-back
+   from the backup if post-verification fails**. Manifest +rollback instructions
+   go to `reports/data_update/step6f_promotion_report.{json,md}`. Because the
+   frozen benchmark was computed on the pre-promotion 8547-row window
+   (n_train+cal+test), benchmark-reproduction tests slice the official CSV to
+   `date <= 2026-05-16` before reproducing.
 
 Official LR baseline as of 2026-07-07:
 **step5c_stronger_regularized_lr_drop_weight_class_platt**. This is Step 3C
@@ -185,9 +246,11 @@ explicit sign-off. Because the final held-out test was touched in prior
 diagnostics, future claims should emphasize validation stability plus
 consistency with the held-out re-report, not a fresh untouched test.
 
-Step 5A (Run 1) found the age and experience groups most valuable, most
-groups within the +/-0.002 log-loss noise band, and one borderline win
-(dropping `weight_class`, -0.0026 on the *test* set only).
+The original Step 5A (Run 1) report used the former C=1 LR and found age and
+experience most valuable, most groups within the +/-0.002 log-loss noise band,
+and one borderline test-only win from dropping `weight_class` (-0.0026).
+Those are historical diagnostic findings. The current Step 5A implementation
+instead reproduces the promoted numeric-only elastic-net official model exactly.
 
 Step 5B (Run 2) tested that hypothesis validation-first. Findings: the
 official anchor reproduced exactly (0.6442244532062779); the best finalist
@@ -375,9 +438,35 @@ offline-cache mode over HTML you save from a normal browser:
    browser-saved HTML has not been supplied in this repo yet, so a real diff
    still awaits those cached pages.
 
-**Next is Step 6D.2**: a *guarded* DB apply (insert-only, never overwrite
-existing rows, dry-run-diff → confirm → apply), driven by cached UFCStats HTML,
-only after this audit is verified on real cached pages and explicitly approved.
+**Step 6D.2 is available** as a guarded cached-event apply: it remains a
+narrow operator action, driven by one reviewed browser-saved completed-event
+HTML file. Run its dry-run first, then use `--apply` only after reviewing the
+report; it creates a timestamped backup and inserts new rows only.
+
+**Step 6E is available** as the controlled processed-feature rebuild after a
+Step 6D.2 apply. It rebuilds Step 3/3B/3C into a *new* directory (default
+`data/processed/rebuild_step6e_<UTC-date>`), verifies against the official
+Step 3C file, and reports — without overwriting official processed files,
+editing the benchmark, retraining/promoting a model, or writing the DB. On the
+current DB it rebuilt to **8591 rows / 116 columns** (old 8547, Δ +44 for the
+four applied events), max date **2026-06-27**, UFC 329 absent, schema
+identical & ordered, all 43 features present, 0 duplicates/infinities, Step 6B
+input accepted 44/44, and the official model scored all 44 rebuilt rows in
+[0,1] (structural only, no benchmark). Promoting the rebuilt files to official
+is a separate deliberate decision, not part of Step 6E.
+
+**Step 6F promoted the rebuilt files to official** (2026-07-10). Because the
+first Step 6E rebuild had run with *uncommitted* working-tree edits to
+`matchup_features.py` (5 `*_matchup_net_advantage` model features sign-flipped),
+that first promotion was rolled back from its backup; the rebuild was re-run
+with the builders at their **committed** versions (verified to reproduce every
+old row to `|Δ|=0`, +44 new events), then re-promoted. Official `data/processed/`
+Step 3/3B/3C are now **8591 rows** through **2026-06-27** (backup of the prior
+8547-row files under `data/processed/backups/pre_step6f_promotion_<stamp>/`). DB
+`c33828a…` and `benchmarks/official_baseline.json` are unchanged; the frozen
+benchmark still reproduces **0.641920** on the `date <= 2026-05-16` window. The
+uncommitted matchup-formula change remains WIP and was deliberately **not**
+promoted. 310 tests pass.
 
 There is deliberately **no betting logic, no odds as features, no UI**.
 
@@ -455,6 +544,21 @@ There is deliberately **no betting logic, no odds as features, no UI**.
 # live fetch is blocked by a JS challenge, so use --cache-dir of saved HTML + --offline-cache-only)
 .venv/bin/python scripts/run_step6d1_ufcstats_audit.py --db data/ufc.db --output-dir reports/data_update \
     --max-events 10 --cache-dir data/cache/ufcstats --offline-cache-only --include-upcoming
+# Step 6D.2 guarded cached-event apply (dry-run first; --apply creates a backup and inserts only new rows)
+.venv/bin/python scripts/apply_step6d2_cached_event_update.py --db data/ufc.db \
+    --event-cache data/cache/ufcstats/event_<id>.html --output-dir reports/data_update
+# Step 6E controlled processed-feature rebuild from the updated DB (non-destructive; never overwrites official
+# data/processed/ files, benchmark, or the model; DB stays read-only; writes rebuilt CSVs + reports/data_update/step6e/)
+.venv/bin/python scripts/run_step6e_rebuild_processed_from_db.py --db data/ufc.db \
+    --output-dir data/processed/rebuild_step6e_20260709 --reports-dir reports/data_update/step6e \
+    --no-overwrite-official
+# Step 6F guarded promotion of the rebuilt processed files to official (dry-run default; --apply backs up first).
+# Data-artifact promotion only: never edits the benchmark/model/DB. For a data-ONLY promotion ensure the feature
+# builders are at their committed versions before the Step 6E rebuild it consumes.
+.venv/bin/python scripts/run_step6f_promote_processed.py \
+    --source-dir data/processed/rebuild_step6e_20260710_committed          # dry-run
+.venv/bin/python scripts/run_step6f_promote_processed.py \
+    --source-dir data/processed/rebuild_step6e_20260710_committed --apply  # backup + promote
 ```
 
 ## Non-negotiable invariants
@@ -485,8 +589,9 @@ There is deliberately **no betting logic, no odds as features, no UI**.
   historical aggregates; anything else matching sig_str/takedown/control is
   rejected. Result columns stay in outputs as labels/metadata only.
 - **Missing history is null, not zero** — unless zero is an exact count
-  (debut prior wins). Imputation happens inside the sklearn Pipeline from
-  training-split statistics only.
+  (debut prior wins). Partial/null per-fight stat totals must not become
+  zero-valued rolling observations. Imputation happens inside the sklearn
+  Pipeline from training-split statistics only.
 - **Metrics:** log loss is the primary comparison number, then Brier and
   calibration gaps. Accuracy alone is never a success metric.
 - **Preserve existing outputs.** Calibration is a separate layer; do not
@@ -553,6 +658,9 @@ complete.
 | `ufc_pipeline/step6b_live_predictions.py` | Step 6B: forward live prediction ledger — validate upcoming-card features, predict with the official model, append-only `data/live/` ledger, result resolution, live model report with small-sample warnings (never changes the model) |
 | `ufc_pipeline/step6c_upcoming_feature_builder.py` | Step 6C: matchup CSV → Step 3C feature CSV for Step 6B — synthetic-fight direct recomputation via the real builders (time-safe < event_date), deterministic name matching, debut/unmatched/ambiguous handling, Step 6B output validation, build report (no scraping, no odds) |
 | `ufc_pipeline/step6d_ufcstats_update_audit.py` | Step 6D.1/6D.1b: READ-ONLY UFCStats vs `data/ufc.db` audit — stdlib fetcher w/ cache (friendly names) + graceful JS-challenge degradation, pure HTML parsers, `detect_page_type`/`validate_cache` cache validator, URL-preferred fighter matching, missing/stale/ambiguous detection, cache-source-quality report (never writes the DB) |
+| `ufc_pipeline/step6d2_guarded_db_apply.py` | Step 6D.2: one reviewed cached completed event → guarded insert-only plan/apply, backup, ambiguity/non-append blocks, optional Step 6C verification |
+| `ufc_pipeline/step6e_rebuild_processed.py` | Step 6E: non-destructive processed-feature rebuild from the updated DB — reuses the canonical Step 3/3B/3C builders into a separate dir (DB-read-only, md5-guarded), schema parity vs official Step 3C, new-event + future-exclusion verification, feature-quality + Step 6B-input + structural model-compat checks, JSON/MD report; never overwrites official processed files, benchmark, or model |
+| `ufc_pipeline/step6f_promote_processed.py` | Step 6F: guarded promotion of Step 6E rebuilt files to official `data/processed/` — dry-run default, explicit `--source-dir`, validate-before-touch (reuses Step 6E checkers), backup-before-overwrite, post-promotion re-verify + auto-rollback, manifest + rollback instructions; data-artifact only, never edits benchmark/model/DB |
 | `benchmarks/official_baseline.json` | fixed official-model benchmark reference (never regenerate casually) |
 | `scripts/` | one CLI wrapper per pipeline stage |
 | `docs/greco_field_audit.md` | source-overlap rules (mdabbert vs Greco) |

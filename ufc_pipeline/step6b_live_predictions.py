@@ -177,7 +177,17 @@ def confidence_label(p: float) -> str:
 
 def load_official_model_config(baseline_path: str | None = DEFAULT_BASELINE_PATH) -> dict:
     """Official model identity (read-only). Errors clearly if inconsistent."""
+    baseline = _load_json(baseline_path)
+    if baseline_path is not None and baseline is None:
+        raise FileNotFoundError(f"Official baseline file not found: {baseline_path}")
+    if baseline_path is not None and not isinstance(baseline.get("official_model"), dict):
+        raise ValueError(f"Official baseline file has no official_model object: {baseline_path}")
+
     config = load_official_replay_config(baseline_path)
+    official = baseline.get("official_model", {}) if baseline else {}
+    config["official_split"] = official.get("split")
+    if baseline_path is not None and not isinstance(config["official_split"], dict):
+        raise ValueError(f"Official baseline file has no locked split metadata: {baseline_path}")
     if config["hyperparameters"].get("C") != 0.003 or config["hyperparameters"].get("l1_ratio") != 0.1:
         raise ValueError(
             "Official model metadata is inconsistent with the expected Step 5C config "
@@ -186,6 +196,77 @@ def load_official_model_config(baseline_path: str | None = DEFAULT_BASELINE_PATH
     if config["raw_weight_class"] != "dropped":
         raise ValueError("Official model config must drop raw weight_class for live prediction.")
     return config
+
+
+def _official_training_split(
+    df: pd.DataFrame,
+    config: dict,
+    train_frac: float,
+    calibration_frac: float,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Return the locked benchmark split when its metadata is available.
+
+    The official processed CSV is allowed to grow as new events are promoted.
+    Reapplying percentage splits to that mutable file silently changes the live
+    model, so production runs must freeze both the benchmark cutoff and counts.
+    Synthetic callers without benchmark split metadata retain the fractional
+    fallback used by the unit tests and standalone experiments.
+    """
+    locked = config.get("official_split")
+    if not locked:
+        train, calibration, test = chronological_three_way_split(
+            df, train_frac=train_frac, calibration_frac=calibration_frac,
+        )
+        return train, calibration, test, {
+            "split_source": "fractional_fallback_no_locked_split",
+            "benchmark_cutoff_date": None,
+            "benchmark_rows": int(len(df)),
+            "excluded_post_benchmark_rows": 0,
+        }
+
+    count_keys = ("n_train", "n_calibration", "n_test")
+    missing = [key for key in count_keys if key not in locked]
+    test_dates = locked.get("test_dates")
+    if missing or not isinstance(test_dates, list) or len(test_dates) != 2:
+        raise ValueError(
+            "Official benchmark split metadata is incomplete; expected "
+            f"{list(count_keys)} and two test_dates, missing={missing}."
+        )
+
+    counts = [int(locked[key]) for key in count_keys]
+    expected_rows = sum(counts)
+    cutoff = pd.Timestamp(test_dates[-1])
+    parsed_dates = pd.to_datetime(df["date"], errors="raise")
+    frozen = df.loc[parsed_dates <= cutoff].reset_index(drop=True)
+    if len(frozen) != expected_rows:
+        raise ValueError(
+            "Official benchmark window no longer matches its locked split: "
+            f"date <= {cutoff.date()} produced {len(frozen)} rows; "
+            f"expected {expected_rows}. Refusing to fit a changed live model."
+        )
+
+    n_train, n_calibration, n_test = counts
+    train = frozen.iloc[:n_train].copy()
+    calibration = frozen.iloc[n_train:n_train + n_calibration].copy()
+    test = frozen.iloc[n_train + n_calibration:n_train + n_calibration + n_test].copy()
+
+    expected_ranges = (locked.get("train_dates"), locked.get("calibration_dates"), test_dates)
+    for label, part, expected in zip(("train", "calibration", "test"), (train, calibration, test), expected_ranges):
+        if not isinstance(expected, list) or len(expected) != 2:
+            continue
+        actual = [str(part["date"].min()), str(part["date"].max())]
+        if actual != [str(expected[0]), str(expected[1])]:
+            raise ValueError(
+                f"Official {label} date range changed: got {actual}, expected {expected}. "
+                "Refusing to fit a changed live model."
+            )
+
+    return train, calibration, test, {
+        "split_source": "locked_official_baseline",
+        "benchmark_cutoff_date": str(cutoff.date()),
+        "benchmark_rows": int(len(frozen)),
+        "excluded_post_benchmark_rows": int(len(df) - len(frozen)),
+    }
 
 
 def train_official_model(
@@ -204,7 +285,10 @@ def train_official_model(
     df = df[df[TARGET].notna() & df["fighter_a_expected_win_prob"].notna()].copy()
     df = coerce_numeric_features(df, base_numeric, context="step6b_live_predictions")
     df = df.sort_values(["date", "fight_id"]).reset_index(drop=True)
-    train, calib, _test = chronological_three_way_split(df, train_frac=train_frac, calibration_frac=calibration_frac)
+    source_rows = int(len(df))
+    train, calib, _test, split_metadata = _official_training_split(
+        df, config, train_frac=train_frac, calibration_frac=calibration_frac,
+    )
     pipeline, platt = fit_official_model(train, calib, base_numeric, random_state=random_state, max_iter=max_iter)
     return {
         "pipeline": pipeline,
@@ -216,12 +300,13 @@ def train_official_model(
         "feature_schema_version": config["feature_schema_version"],
         "training_metadata": {
             "training_source": training_csv,
+            "source_rows": source_rows,
             "train_rows": int(len(train)), "calibration_rows": int(len(calib)),
             "train_dates": [str(train["date"].min()), str(train["date"].max())],
             "calibration_dates": [str(calib["date"].min()), str(calib["date"].max())],
+            **split_metadata,
             "note": "Reproduces the official Step 5C model (base LR on official train, Platt on official calibration).",
         },
-        "training_frame": df,   # used for drift comparison only
         "official_train_calib": pd.concat([train, calib]).reset_index(drop=True),
     }
 
@@ -410,9 +495,7 @@ def run_live_predictions(
     max_iter: int = DEFAULT_MAX_ITER,
 ) -> dict:
     batch_id = prediction_batch_id or default_batch_id()
-    trained = train_official_model(training_data, baseline_path, random_seed, max_iter)
-    base_numeric = trained["base_numeric"]
-
+    base_numeric, _categorical = official_step3c_features()
     df = pd.read_csv(input_csv)
     validation = validate_prediction_input(df, base_numeric, allow_duplicates=allow_duplicate_predictions)
     if not validation["ok"]:
@@ -422,6 +505,7 @@ def run_live_predictions(
             + "\nProvide a CSV with the required model feature columns and no result/odds columns."
         )
 
+    trained = train_official_model(training_data, baseline_path, random_seed, max_iter)
     df = coerce_numeric_features(df, base_numeric, context="step6b_live_input")
     valid_mask = np.array([r["status"] == "valid" for r in validation["row_status"]])
     df_valid = df[valid_mask].copy()

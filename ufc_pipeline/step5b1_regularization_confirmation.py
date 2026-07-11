@@ -251,16 +251,6 @@ def build_predeclared_confirmation_candidates(step5b_report: dict | None = None)
     ]
 
 
-def _candidate_key(candidate: dict) -> tuple:
-    return (
-        candidate["feature_config"],
-        candidate["penalty"],
-        float(candidate["C"]),
-        candidate.get("l1_ratio"),
-        candidate.get("class_weight"),
-    )
-
-
 def _candidate_label(candidate: dict) -> str:
     l1 = candidate.get("l1_ratio")
     l1_text = "" if l1 is None else f", l1_ratio={l1}"

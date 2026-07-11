@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Step 5A: feature diagnostics for the official Step 3C LR + Platt model.
+"""Step 5A: feature diagnostics for the current official Step 3C LR + Platt model.
 
 Diagnostics-only: does not replace the official model, does not add
 odds/market features, does not train new model families, does not run a
 hyperparameter search. Reuses the same chronological 70/15/15 split, the
-same LogisticRegression pipeline, and the same PlattCalibrator as the
-official run so every number is directly comparable to the official 0.6442
-held-out test log loss (see benchmarks/official_baseline.json, read-only).
+same elastic-net pipeline (C=0.003, l1_ratio=0.1, solver=saga, raw
+weight_class dropped), and the same PlattCalibrator as the official run so
+every number is directly comparable to benchmarks/official_baseline.json
+(read-only).
 
 Writes:
   <output-dir>/step5a_feature_diagnostics.json

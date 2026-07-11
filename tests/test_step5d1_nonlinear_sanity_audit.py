@@ -44,6 +44,11 @@ from ufc_pipeline.step5d1_nonlinear_sanity_audit import (  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = REPO_ROOT / "benchmarks" / "official_baseline.json"
 REAL_CSV = REPO_ROOT / "data" / "processed" / "ufc_prefight_features_step3c.csv"
+# The frozen benchmark was computed on the data window ending 2026-05-16
+# (n_train+n_calibration+n_test = 8547 rows). Step 6F promoted newer events
+# (through 2026-06-27) into the official Step 3C CSV, so benchmark-reproduction
+# tests must slice to this frozen window rather than the whole (grown) file.
+BENCHMARK_DATA_MAX_DATE = "2026-05-16"
 
 
 def synthetic_df(n: int = 900, seed: int = 21) -> pd.DataFrame:
@@ -258,6 +263,12 @@ def test_anchor_and_run4_hgb_reproduce_on_real_split():
     df = pd.read_csv(REAL_CSV)
     df = df[df[TARGET].notna() & df["fighter_a_expected_win_prob"].notna()].copy()
     df = coerce_numeric_features(df, base_numeric, context="test")
+    # Reproduce on the benchmark's frozen data window, not the post-6F-promotion
+    # whole file; assert the slice still equals the benchmark's recorded size.
+    split = baseline["official_model"]["split"]
+    n_benchmark = split["n_train"] + split["n_calibration"] + split["n_test"]
+    df = df[df["date"] <= BENCHMARK_DATA_MAX_DATE].copy()
+    assert len(df) == n_benchmark, f"frozen benchmark window changed: {len(df)} != {n_benchmark}"
     _pre, train, calib, test = build_pretest_and_official_split(df, train_frac=0.70, calibration_frac=0.15)
 
     anchor = {c["name"]: c for c in build_reference_candidates()}[ANCHOR_NAME]

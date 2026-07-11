@@ -148,6 +148,19 @@ def test_validate_matchup_schema_per_row_errors():
     assert statuses == ["error", "error", "error", "valid"]
 
 
+def test_validate_matchup_schema_rejects_null_event_date():
+    df = pd.DataFrame([
+        {"event_date": None, "event_name": "E", "fighter_a": "A", "fighter_b": "B"},
+    ])
+
+    v = validate_matchup_schema(df)
+
+    assert v["ok"] is True  # schema exists; the bad value is a failed row
+    assert v["row_status"] == [{
+        "row_index": 0, "status": "error", "reasons": ["unparseable event_date"],
+    }]
+
+
 # ---------------------------------------------------------------------------
 # End-to-end build
 # ---------------------------------------------------------------------------
@@ -180,6 +193,40 @@ def test_time_safety_no_fights_on_or_after_event_date(history_db):
     # Moving the event earlier reduces the count -> proves the cutoff is applied
     res_early = build_upcoming_features(_matchups([("Jon Jones", "Stipe Miocic")], event_date="2021-03-01"), db_path=history_db)
     assert res_early["report"]["time_safety"][0]["fighter_a_prior_fights"] == 2  # only f1, f3
+
+
+def test_duplicate_fighter_on_card_is_failed_without_contaminating_features(history_db):
+    solo = build_upcoming_features(_matchups([("Jon Jones", "Stipe Miocic")]), db_path=history_db)
+    card = _matchups([("Jon Jones", "Stipe Miocic"), ("Jon Jones", "Alex Pereira")])
+    card.loc[1, "event_date"] = "2023-06-01T00:00:00"
+    res = build_upcoming_features(
+        card, db_path=history_db,
+    )
+
+    assert len(res["features"]) == 1
+    assert res["report"]["n_failed_rows"] == 1
+    failed = res["report"]["failed_rows"][0]
+    assert failed["row_index"] == 1
+    assert any("multiple matchups" in reason for reason in failed["reasons"])
+    pd.testing.assert_series_equal(
+        res["features"].iloc[0], solo["features"].iloc[0], check_names=False,
+    )
+
+
+def test_unresolved_matchup_does_not_reserve_a_fighter_on_the_card(history_db):
+    solo = build_upcoming_features(_matchups([("Jon Jones", "Stipe Miocic")]), db_path=history_db)
+    res = build_upcoming_features(
+        _matchups([("Jon Jones", "Ghost Fighter"), ("Jon Jones", "Stipe Miocic")]),
+        db_path=history_db,
+    )
+
+    assert len(res["features"]) == 1
+    assert res["report"]["n_failed_rows"] == 1
+    assert res["report"]["failed_rows"][0]["row_index"] == 0
+    assert any("unmatched" in reason for reason in res["report"]["failed_rows"][0]["reasons"])
+    pd.testing.assert_series_equal(
+        res["features"].iloc[0], solo["features"].iloc[0], check_names=False,
+    )
 
 
 def test_debut_fighter_gets_null_history_not_failure(history_db):
