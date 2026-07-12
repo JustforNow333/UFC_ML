@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import joblib
 
 from ufc_pipeline.calibration import (
     calibration_table_with_gap,
@@ -41,6 +42,7 @@ from ufc_pipeline.calibration import (
     high_confidence_diagnostics,
 )
 from ufc_pipeline.feature_diagnostics import DEFAULT_BASELINE_PATH, official_step3c_features
+from ufc_pipeline.layoff_features import LAYOFF_FEATURE_COLUMNS
 from ufc_pipeline.modeling import RANDOM_STATE, TARGET, check_features_allowed, coerce_numeric_features, evaluate_probs
 from ufc_pipeline.step5b_regularization_search import DEFAULT_MAX_ITER, WEIGHT_CLASS_COLUMN
 from ufc_pipeline.step6a_pseudo_live_replay import (
@@ -311,6 +313,38 @@ def train_official_model(
     }
 
 
+def load_prediction_model_artifact(path: str | Path) -> dict:
+    """Load a versioned frozen model and fail loudly on schema disagreement."""
+    artifact = joblib.load(path)
+    required = {
+        "pipeline", "platt", "base_numeric", "model_version",
+        "calibration_version", "feature_schema_version", "training_metadata",
+    }
+    missing = sorted(required - set(artifact)) if isinstance(artifact, dict) else sorted(required)
+    if missing:
+        raise ValueError(f"Prediction model artifact is missing required fields: {missing}")
+    base_numeric = list(artifact["base_numeric"])
+    expected_schema = feature_schema_version(base_numeric)
+    if artifact["feature_schema_version"] != expected_schema:
+        raise ValueError(
+            "Prediction model artifact feature schema mismatch: "
+            f"metadata={artifact['feature_schema_version']}, computed={expected_schema}."
+        )
+    config = dict(artifact.get("config") or {})
+    config.update({
+        "model_version": artifact["model_version"],
+        "feature_schema_version": artifact["feature_schema_version"],
+        "raw_weight_class": config.get("raw_weight_class", "dropped"),
+    })
+    return {
+        **artifact,
+        "base_numeric": base_numeric,
+        "config": config,
+        "official_train_calib": artifact.get("official_train_calib", pd.DataFrame()),
+        "artifact_path": str(path),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
@@ -527,16 +561,32 @@ def run_live_predictions(
     allow_duplicate_predictions: bool = False,
     overwrite_existing_pending: bool = False,
     preserve_existing_ledger_bytes: bool = False,
+    prediction_timing_scope: str | None = None,
+    prebout_evidence: str | None = None,
     random_seed: int = RANDOM_STATE,
     max_iter: int = DEFAULT_MAX_ITER,
+    model_artifact_path: str | None = None,
 ) -> dict:
     if preserve_existing_ledger_bytes and (allow_duplicate_predictions or overwrite_existing_pending):
         raise ValueError(
             "Byte-preserving append requires duplicate and overwrite flags to remain disabled."
         )
     batch_id = prediction_batch_id or default_batch_id()
-    base_numeric, _categorical = official_step3c_features()
+    trained = load_prediction_model_artifact(model_artifact_path) if model_artifact_path else None
+    if trained is not None:
+        base_numeric = list(trained["base_numeric"])
+    else:
+        base_numeric, _categorical = official_step3c_features()
     df = pd.read_csv(input_csv)
+    if model_artifact_path:
+        official_features, _ = official_step3c_features()
+        known_model_features = set(official_features) | set(LAYOFF_FEATURE_COLUMNS)
+        supplied_feature_order = [column for column in df.columns if column in known_model_features]
+        if supplied_feature_order != base_numeric:
+            raise ValueError(
+                "Prediction input feature order/schema does not match the frozen artifact: "
+                f"artifact={base_numeric}, supplied={supplied_feature_order}."
+            )
     validation = validate_prediction_input(df, base_numeric, allow_duplicates=allow_duplicate_predictions)
     if not validation["ok"]:
         raise ValueError(
@@ -545,7 +595,9 @@ def run_live_predictions(
             + "\nProvide a CSV with the required model feature columns and no result/odds columns."
         )
 
-    trained = train_official_model(training_data, baseline_path, random_seed, max_iter)
+    if trained is None:
+        trained = train_official_model(training_data, baseline_path, random_seed, max_iter)
+
     df = coerce_numeric_features(df, base_numeric, context="step6b_live_input")
     valid_mask = np.array([r["status"] == "valid" for r in validation["row_status"]])
     df_valid = df[valid_mask].copy()
@@ -573,6 +625,10 @@ def run_live_predictions(
         else:
             p_a = float(probs[vi]); vi += 1
             note_parts = [f for f in LOW_HISTORY_FLAGS if f in df.columns and float(pd.to_numeric(row.get(f), errors="coerce") or 0) > 0]
+            if prediction_timing_scope:
+                note_parts.append(f"prediction_timing_scope={prediction_timing_scope}")
+            if prebout_evidence:
+                note_parts.append(f"prebout_evidence={prebout_evidence}")
             base.update({"predicted_probability_a": p_a, "predicted_probability_b": float(1.0 - p_a),
                          "status": "pending", "notes": ";".join(note_parts)})
             prediction_table.append({
@@ -594,14 +650,22 @@ def run_live_predictions(
         appended_rows = int(len(updated) - len(ledger_df) + append_stats["n_pending_overwritten"])
         ledger_write_mode = "rewrite"
 
-    drift = _live_drift(df_valid, trained["official_train_calib"], base_numeric) if len(df_valid) else {"n_rows": 0}
+    drift_reference = trained.get("official_train_calib")
+    drift = (
+        _live_drift(df_valid, drift_reference, base_numeric)
+        if len(df_valid) and isinstance(drift_reference, pd.DataFrame) and not drift_reference.empty
+        else {"n_rows": int(len(df_valid)), "note": "training reference not embedded in artifact"}
+    )
     leakage = _live_leakage_checks(base_numeric, validation, trained["config"])
 
     report = {
         "generated_at": now,
         "prediction_batch_id": batch_id,
         "prediction_mode": PREDICTION_MODE,
+        "prediction_timing_scope": prediction_timing_scope,
+        "prebout_evidence": prebout_evidence,
         "input": input_csv,
+        "model_artifact_path": model_artifact_path,
         "ledger_path": str(ledger_path),
         "model_version": trained["model_version"],
         "calibration_version": trained["calibration_version"],
@@ -944,6 +1008,10 @@ def _render_batch_markdown(report: dict) -> str:
     a = report["append_stats"]
     lines.append(f"- Ledger append: accepted {a['n_accepted']}, duplicates rejected {a['n_rejected_duplicates']}, "
                  f"pending overwritten {a['n_pending_overwritten']}, versioned {a['n_duplicates_versioned']}")
+    if report.get("prediction_timing_scope"):
+        lines.append(f"- Prediction timing scope: `{report['prediction_timing_scope']}`")
+    if report.get("prebout_evidence"):
+        lines.append(f"- Pre-bout evidence: {report['prebout_evidence']}")
     lines.append("")
     lines.append("## Predictions")
     lines.append("")

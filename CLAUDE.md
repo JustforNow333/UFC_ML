@@ -137,6 +137,17 @@ central SQLite database (`data/ufc.db`):
    report loudly warns at < 50 resolved (too noisy) and < 100 (preliminary).
    No scraper is included — the user prepares the feature CSV manually; a future
    Step 6C could add a data-source updater / scraper (still no odds).
+   Two later additions: (a) an optional **versioned frozen artifact**
+   (`--model-artifact`, `load_prediction_model_artifact`) — a saved joblib bundle
+   (`pipeline, platt, base_numeric, model_version, calibration_version,
+   feature_schema_version, training_metadata`) whose exact feature order/schema
+   hash replaces the retrained official default and is asserted against both the
+   artifact metadata and the supplied CSV column order; this is how the
+   experimental layoff candidates are scored without touching the production
+   allowlist. (b) Optional **pre-bout audit metadata** (`--prediction-timing-scope`,
+   `--prebout-evidence`) recorded per prediction (in the row `notes` and the batch
+   report) to document a genuinely-pre-fight late/supplemental run — used during
+   the first live event.
 17. **Upcoming-card feature builder (Step 6C)** —
    `ufc_pipeline/step6c_upcoming_feature_builder.py`: turns a simple matchup CSV
    into the model-ready Step 3C feature CSV Step 6B expects, closing the manual
@@ -153,7 +164,15 @@ central SQLite database (`data/ufc.db`):
    Fighter names are matched deterministically (accent/punct-normalized, exact
    only); unmatched or ambiguous names become reported failed rows, never
    guessed; a fighter can appear in only one matchup per event date; debut/
-   low-history fighters get training's null policy + `no_prior_stats` flags.
+   low-history fighters get training's null policy + `no_prior_stats` flags. The
+   one exception to exact-only matching is a tiny reviewed `VALIDATED_FIGHTER_ALIASES`
+   map (identity assertions, not fuzzy matching): Bobby Green → King Green (legal
+   name change) and a known card-source typo `Terrance Mickney` → `Terrance
+   McKinney`; deliberately-similar names (Stevenson/Steveson, Kamaka/Kamaka III)
+   are NOT collapsed. A `--feature-set {official,layoff_a,layoff_b}` selector
+   (`model_features_for_set`) emits the official 43-feature schema or an
+   experimental layoff candidate schema; a non-official set chained into Step 6B
+   requires `--prediction-model-artifact`.
    Output goes to `data/live/` (or an explicit `--output`)
    and a build report to `reports/live/step6c_feature_build_<ts>.{json,md}`; it
    validates the output against Step 6B and refuses to write an invalid file. It
@@ -466,11 +485,73 @@ Step 3/3B/3C are now **8591 rows** through **2026-06-27** (backup of the prior
 `c33828a…` and `benchmarks/official_baseline.json` are unchanged; the frozen
 benchmark still reproduces **0.641920** on the `date <= 2026-05-16` window. The
 uncommitted matchup-formula change remains WIP and was deliberately **not**
-promoted. 310 tests pass.
+promoted. 458 tests pass (the jump from 361 is the new fixture-tested sportsbook
+Stage 2 suite; see below).
+
+**First forward live event — UFC 329 (2026-07-11).** The Step 6C → 6B chain ran
+against a real, genuinely-upcoming card (14 bouts) for the first time. The
+confirmed-card manifest was expanded with resolver-assigned
+`fighter_a_id/fighter_b_id`, display `*_name` columns, and per-bout
+`prediction_availability` / `prediction_unavailable_reason` /
+`bout_status_checked_at` / `bout_status_evidence` fields. 11 bouts got frozen
+predictions; three are honest gaps rather than fabricated 50/50s —
+`unavailable_unsupported` for fighters with no unique `data/ufc.db` identity
+(Gable Steveson, John Garza) and `unavailable_started` for a bout (Gandra vs
+Reese) that had already begun before the supplemental pre-bout run. The
+pre-bout-evidence workflow (`--prediction-timing-scope`/`--prebout-evidence`)
+was used to document time-safety for the late main-card/prelim additions.
+Results resolution/scoring happens only after outcomes are entered; the sample
+is still far below the report's 50-resolved noise floor.
 
 There is deliberately **no betting logic and no odds as features**. A small
-read-only dashboard displays already-frozen Step 6B predictions; it cannot run
-inference, edit the ledger, or resolve results.
+read-only dashboard displays the confirmed card manifest left-joined to
+already-frozen Step 6B predictions; unsupported or too-late fights remain
+visible as `Prediction unavailable`. It cannot run inference, edit the ledger,
+or resolve results.
+
+The experimental layoff feature family is implemented end-to-end but disabled
+from production. It adds 14 columns based on strictly earlier stored decisive
+UFC fights; same-day activity is excluded and debuts remain null with explicit
+missing flags; the saved sklearn pipeline learns median imputation from the
+training partition only (no builder fills nulls with zero). The locked
+2026-07-11 frozen-split ablation found both candidates worse than the official
+43-feature model on the primary metrics (baseline test log loss 0.641920;
+Candidate A — the simple raw/signed/missing 48-feature set — 0.642753,
++0.000834; Candidate B — the full 57-feature family — 0.643412, +0.001492), so
+`official_step3c_features()`, the benchmark, and production artifacts remain
+unchanged. Candidate frozen artifacts assert their own feature order/schema hash
+and refuse a mismatched CSV, so the 43-feature snapshot cannot silently consume
+a candidate file. Versioned reports/artifacts live under
+`reports/layoff_experiment/`, `data/models/experiments/layoff_20260711/`, and
+`data/processed/experiments/layoff_20260711/`.
+
+**Sportsbook feature project Stage 2 (2026-07-12)** is an isolated data
+foundation under `ufc_pipeline/sportsbook/`: separate
+`data/sportsbook/sportsbook_odds.db`, immutable content-addressed raw JSON,
+canonical venue/book registries, a fixture-tested The Odds API adapter,
+conservative canonical matching, proportional two-sided de-vigging,
+cutoff-safe median consensus, reviewed sidecar mappings, and a provider-sample
+validator. Initialize it with `python3 scripts/init_sportsbook_storage.py` and
+validate a local sample with
+`python3 scripts/validate_sportsbook_provider_sample.py --provider
+the_odds_api --input <path> --raw-retention-permitted`. Network is disabled by
+default; historical calls require both `--allow-network` and
+`--allow-billable-request`. No real provider sample was accepted, so Stage 3
+remains blocked pending a licensed retained sample that passes schema and
+timestamp validation. Synthetic/documentation-shaped fixtures prove behavior,
+not historical coverage. Reports live at
+`reports/sportsbook/stage2_implementation.{md,json}` and
+`reports/sportsbook/stage2_schema.md`.
+
+Permanent sportsbook-project boundary: preserve independent `base_model` and
+`sportsbook_augmented_model` variants. Only approved traditional pre-fight
+sportsbook observations at or before a predeclared `prediction_as_of` may enter
+the augmented model. Kalshi, Polymarket, betting exchanges, live/in-play odds,
+DFS, and similar products are never model inputs, fallbacks, calibration data,
+or selection signals; they may be loaded only downstream after both model
+probabilities are frozen. The proposed primary historical cutoff is scheduled
+bout time minus 24 hours, and incomplete history must remain missing rather than
+being filled with closing or future odds.
 
 ## Setup
 
@@ -527,14 +608,18 @@ inference, edit the ledger, or resolve results.
 .venv/bin/python scripts/run_step6a_pseudo_live_replay.py --input data/processed/ufc_prefight_features_step3c.csv \
     --output-dir reports --min-train-fights 3000 --calibration-fights 1282 --overwrite
 # Step 6B forward live prediction ledger (upcoming-card CSV -> predictions -> resolve -> live report;
-# writes data/live/ + reports/live/; append-only, needs flags to duplicate/overwrite/re-resolve)
+# writes data/live/ + reports/live/; append-only, needs flags to duplicate/overwrite/re-resolve).
+# Optional: --model-artifact <joblib> to score a versioned frozen artifact instead of the retrained
+# official model; --prediction-timing-scope/--prebout-evidence to record a late pre-bout run's time-safety.
 .venv/bin/python scripts/run_step6b_live_predictions.py --input upcoming_card_features.csv \
     --ledger data/live/live_predictions.csv --output-dir reports/live
 .venv/bin/python scripts/resolve_step6b_live_predictions.py --results completed_results.csv \
     --ledger data/live/live_predictions.csv --output-dir reports/live
 .venv/bin/python scripts/run_step6b_live_model_report.py --ledger data/live/live_predictions.csv --output-dir reports/live
 # Step 6C upcoming-card feature builder (matchup CSV -> Step 3C feature CSV for Step 6B; reads data/ufc.db,
-# no scraping/odds; writes data/live/ + reports/live/; needs --overwrite to replace output)
+# no scraping/odds; writes data/live/ + reports/live/; needs --overwrite to replace output).
+# Optional: --feature-set {official,layoff_a,layoff_b} (non-official needs --prediction-model-artifact when
+# chained via --run-predictions).
 .venv/bin/python scripts/build_step6c_upcoming_features.py --matchups data/live/upcoming_card_matchups.csv \
     --output data/live/upcoming_card_features.csv --validate-for-step6b --overwrite
 # then feed the built features into Step 6B (or use --run-predictions to chain automatically):
@@ -564,6 +649,23 @@ inference, edit the ledger, or resolve results.
 # Read-only upcoming prediction dashboard + JSON API (no model run, no ledger writes)
 .venv/bin/python scripts/serve_predictions_dashboard.py
 # Open http://127.0.0.1:8000/ ; API: GET /api/predictions/upcoming
+# Experimental layoff ablation (versioned outputs only; never promotes automatically)
+.venv/bin/python scripts/run_layoff_feature_evaluation.py \
+    --input data/processed/experiments/layoff_20260711/ufc_prefight_features_step3c_layoff.csv
+# Sportsbook Stage 2 isolated data layer (no model features; network OFF by default).
+# Initialize the separate odds DB + immutable raw archive:
+.venv/bin/python scripts/init_sportsbook_storage.py
+# Validate a locally-saved provider sample (no network; --raw-retention-permitted to archive raw JSON):
+.venv/bin/python scripts/validate_sportsbook_provider_sample.py --provider the_odds_api \
+    --input <sample.json> --raw-retention-permitted
+# Ingest/normalize/match/consensus over a saved response (all offline); inspect the DB read-only:
+.venv/bin/python scripts/archive_sportsbook_response.py --provider the_odds_api --input <sample.json>
+.venv/bin/python scripts/normalize_sportsbook_response.py --provider the_odds_api --input <sample.json>
+.venv/bin/python scripts/match_sportsbook_records.py --db data/sportsbook/sportsbook_odds.db
+.venv/bin/python scripts/build_sportsbook_consensus.py --db data/sportsbook/sportsbook_odds.db
+.venv/bin/python scripts/inspect_sportsbook_database.py --db data/sportsbook/sportsbook_odds.db
+# A live historical fetch is gated behind BOTH flags (billable) and stays blocked otherwise:
+.venv/bin/python scripts/fetch_the_odds_api.py --allow-network --allow-billable-request
 ```
 
 ## Non-negotiable invariants
@@ -660,13 +762,16 @@ complete.
 | `ufc_pipeline/step5d_nonlinear_models.py` | Step 5D: HistGradientBoosting grid + LR/HGB blend vs official LR, Platt/isotonic calibration, validation-only selection, finalist test re-report, permutation importance |
 | `ufc_pipeline/step5d1_nonlinear_sanity_audit.py` | Step 5D.1: diagnostics-only audit of the Run 4 result — anchor/HGB reproduction, probability orientation, row-feature parity, calibration protocol, NaN handling, staged HGB search, early-stopping + blend stability audits |
 | `ufc_pipeline/step6a_pseudo_live_replay.py` | Step 6A: event-by-event pseudo-live replay of the official model — per-event refit+Platt on strictly-earlier fights, replay ledger, rolling/calibration/drift/leakage reporting (pipeline-validation tool, never changes the model) |
-| `ufc_pipeline/step6b_live_predictions.py` | Step 6B: forward live prediction ledger — validate upcoming-card features, predict with the official model, append-only `data/live/` ledger, result resolution, live model report with small-sample warnings (never changes the model) |
-| `ufc_pipeline/step6c_upcoming_feature_builder.py` | Step 6C: matchup CSV → Step 3C feature CSV for Step 6B — synthetic-fight direct recomputation via the real builders (time-safe < event_date), deterministic name matching, debut/unmatched/ambiguous handling, Step 6B output validation, build report (no scraping, no odds) |
+| `ufc_pipeline/step6b_live_predictions.py` | Step 6B: forward live prediction ledger — validate upcoming-card features, predict with the official model (or an optional schema-checked frozen `--model-artifact`), optional pre-bout audit metadata, append-only `data/live/` ledger, result resolution, live model report with small-sample warnings (never changes the model) |
+| `ufc_pipeline/step6c_upcoming_feature_builder.py` | Step 6C: matchup CSV → Step 3C feature CSV for Step 6B — synthetic-fight direct recomputation via the real builders (time-safe < event_date), deterministic name matching (+ tiny reviewed `VALIDATED_FIGHTER_ALIASES`), `--feature-set` official/layoff schemas, debut/unmatched/ambiguous handling, Step 6B output validation, build report (no scraping, no odds) |
 | `ufc_pipeline/step6d_ufcstats_update_audit.py` | Step 6D.1/6D.1b: READ-ONLY UFCStats vs `data/ufc.db` audit — stdlib fetcher w/ cache (friendly names) + graceful JS-challenge degradation, pure HTML parsers, `detect_page_type`/`validate_cache` cache validator, URL-preferred fighter matching, missing/stale/ambiguous detection, cache-source-quality report (never writes the DB) |
 | `ufc_pipeline/step6d2_guarded_db_apply.py` | Step 6D.2: one reviewed cached completed event → guarded insert-only plan/apply, backup, ambiguity/non-append blocks, optional Step 6C verification |
 | `ufc_pipeline/step6e_rebuild_processed.py` | Step 6E: non-destructive processed-feature rebuild from the updated DB — reuses the canonical Step 3/3B/3C builders into a separate dir (DB-read-only, md5-guarded), schema parity vs official Step 3C, new-event + future-exclusion verification, feature-quality + Step 6B-input + structural model-compat checks, JSON/MD report; never overwrites official processed files, benchmark, or model |
 | `ufc_pipeline/step6f_promote_processed.py` | Step 6F: guarded promotion of Step 6E rebuilt files to official `data/processed/` — dry-run default, explicit `--source-dir`, validate-before-touch (reuses Step 6E checkers), backup-before-overwrite, post-promotion re-verify + auto-rollback, manifest + rollback instructions; data-artifact only, never edits benchmark/model/DB |
-| `ufc_pipeline/predictions_dashboard.py` | Read-only upcoming-predictions ledger validation, grouping, confidence labels, weight-class enrichment, JSON endpoint, and explicit static routes; never imports or runs modeling code |
+| `ufc_pipeline/predictions_dashboard.py` | Read-only confirmed-card manifest left join to frozen upcoming predictions, unavailable-fight states, grouping, confidence labels, weight-class enrichment, JSON endpoint, and explicit static routes; never imports or runs modeling code |
+| `ufc_pipeline/layoff_features.py` | Shared strict-date layoff feature family for historical and Step 6C live builds; UFC-only decisive-fight scope, same-day exclusion, honest debut nulls |
+| `ufc_pipeline/layoff_feature_evaluation.py` | Versioned official-vs-layoff A/B frozen-split evaluation, bucket metrics, coefficients, and candidate artifact serialization; never promotes or edits protected outputs |
+| `ufc_pipeline/sportsbook/` | Stage 2 provider-neutral traditional-sportsbook sidecar: immutable raw archive, registries, The Odds API adapter, reviewed matching, de-vigging, cutoff-safe consensus, and sample acceptance; no model features/training or prediction-market code |
 | `benchmarks/official_baseline.json` | fixed official-model benchmark reference (never regenerate casually) |
 | `scripts/` | one CLI wrapper per pipeline stage |
 | `docs/greco_field_audit.md` | source-overlap rules (mdabbert vs Greco) |

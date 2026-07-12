@@ -321,7 +321,11 @@ def _read_ledger(path: Path) -> tuple[list[dict[str, str]], list[str]]:
 
 
 def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> dict[str, Any]:
-    """Validate and group displayable unresolved predictions without mutations."""
+    """Left-join unresolved predictions onto confirmed card-manifest fights.
+
+    A confirmed matchup remains visible when inference was unsafe or too late;
+    the API returns an explicit unavailable state instead of inventing odds.
+    """
     rows, columns = _read_ledger(config.ledger_path)
     if not columns:
         return {"events": [], "diagnostics": {"invalid_row_count": 0}}
@@ -332,6 +336,7 @@ def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> di
     invalid_count = 0
     excluded_count = 0
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    displayed_manifest_keys: set[tuple[str, str, frozenset[str]]] = set()
 
     for row_number, row in enumerate(rows, start=2):
         if not _is_unresolved(row):
@@ -399,6 +404,8 @@ def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> di
                 "bout_order": bout_order,
                 "fight_status": _text(manifest.get("fight_status")).casefold() if manifest else "confirmed",
                 "prediction_status": "frozen",
+                "prediction_available": True,
+                "prediction_unavailable_reason": None,
                 "batch_id": batch_id,
                 "model_version": model_version,
                 "calibration_version": calibration_version,
@@ -414,6 +421,8 @@ def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> di
                 "calibration_versions": [],
             })
             event["fights"].append(fight)
+            if manifest:
+                displayed_manifest_keys.add(_fight_key(manifest))
             for field, value in (
                 ("batch_ids", batch_id),
                 ("model_versions", model_version),
@@ -430,6 +439,66 @@ def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> di
                 exc,
             )
 
+    # The manifest is the card inventory. Add confirmed rows with no usable
+    # ledger prediction as neutral, auditable cards.
+    for manifest_key, manifest in manifests.rows.items():
+        if manifest_key in displayed_manifest_keys:
+            continue
+        if _text(manifest.get("fight_status")).casefold() not in ACTIVE_FIGHT_STATUSES:
+            continue
+        try:
+            event_date = date.fromisoformat(_text(manifest.get("event_date")))
+            if event_date < current_date:
+                continue
+            event_name = _text(manifest.get("event_name"))
+            fighter_a = _text(manifest.get("fighter_a_name")) or _text(manifest.get("fighter_a"))
+            fighter_b = _text(manifest.get("fighter_b_name")) or _text(manifest.get("fighter_b"))
+            if not event_name or not fighter_a or not fighter_b or _name_key(fighter_a) == _name_key(fighter_b):
+                raise ValueError("manifest event and distinct fighter names are required")
+            weight_class = _text(manifest.get("weight_class"))
+            card_section = _text(manifest.get("card_section")).casefold()
+            bout_order = int(_text(manifest.get("bout_order")))
+            reason = _text(manifest.get("prediction_unavailable_reason")) or "No validated prediction is available."
+            fight = {
+                "fight_id": _text(manifest.get("fight_key")) or _safe_event_id(
+                    event_date.isoformat(), f"{fighter_a}-vs-{fighter_b}",
+                ),
+                "fighter_a": fighter_a,
+                "fighter_b": fighter_b,
+                "fighter_a_probability": None,
+                "fighter_b_probability": None,
+                "predicted_winner": None,
+                "predicted_winner_side": None,
+                "predicted_winner_probability": None,
+                "confidence_label": None,
+                "weight_class": weight_class or None,
+                "bout_label": f"{weight_class} Bout" if weight_class else "UFC Bout",
+                "card_section": card_section,
+                "card_section_label": CARD_SECTION_LABELS[card_section],
+                "bout_order": bout_order,
+                "fight_status": "confirmed",
+                "prediction_status": "unavailable",
+                "prediction_available": False,
+                "prediction_unavailable_reason": reason,
+                "batch_id": None,
+                "model_version": None,
+                "calibration_version": None,
+                "prediction_created_at": None,
+                "_sort_key": _fight_sort_key(manifest, fighter_a, fighter_b, manifest),
+            }
+            group_key = (event_date.isoformat(), _name_key(event_name))
+            event = grouped.setdefault(group_key, {
+                "event_name": event_name,
+                "fights": [],
+                "batch_ids": [],
+                "model_versions": [],
+                "calibration_versions": [],
+            })
+            event["fights"].append(fight)
+        except (TypeError, ValueError) as exc:
+            invalid_count += 1
+            LOGGER.warning("Skipping invalid confirmed manifest fight: %s", exc)
+
     events = []
     for group_key, event_group in grouped.items():
         event_date, _event_name_key = group_key
@@ -440,19 +509,27 @@ def load_upcoming_predictions(config: DashboardConfig = DashboardConfig()) -> di
         batch_ids = event_group["batch_ids"]
         model_versions = event_group["model_versions"]
         calibration_versions = event_group["calibration_versions"]
+        predicted_fight_count = sum(bool(fight["prediction_available"]) for fight in fights)
+        if predicted_fight_count == len(fights):
+            prediction_status = "frozen"
+        elif predicted_fight_count:
+            prediction_status = "partial"
+        else:
+            prediction_status = "unavailable"
         events.append({
             "event_id": _safe_event_id(event_date, event_name),
             "event_name": event_name,
             "event_date": event_date,
-            "batch_id": batch_ids[0],
+            "batch_id": batch_ids[0] if batch_ids else None,
             "batch_ids": batch_ids,
-            "prediction_status": "frozen",
-            "model_version": model_versions[0],
+            "prediction_status": prediction_status,
+            "model_version": model_versions[0] if model_versions else None,
             "model_versions": model_versions,
-            "calibration_version": calibration_versions[0],
+            "calibration_version": calibration_versions[0] if calibration_versions else None,
             "calibration_versions": calibration_versions,
             "prediction_created_at": min(timestamps) if timestamps else None,
             "fight_count": len(fights),
+            "predicted_fight_count": predicted_fight_count,
             "fights": fights,
         })
     events.sort(key=lambda event: (event["event_date"], event["event_name"].casefold()))

@@ -49,6 +49,10 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.db.*
 data/*.sqlite.*
+# Sportsbook layer: licensed/local odds data must NEVER be committed. The whole
+# generated tree is ignored (separate odds DB + WAL/backups + immutable raw JSON
+# archive under raw/<provider>/<sha256>.json); nothing here is meant to be tracked.
+data/sportsbook/
 *.bak
 *.db-journal
 *.db-wal

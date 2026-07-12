@@ -44,6 +44,12 @@ import pandas as pd
 
 from .db import connect, init_schema
 from .export import find_forbidden_columns
+from .layoff_features import (
+    LAYOFF_FEATURE_COLUMNS,
+    LayoffHistory,
+    build_layoff_feature_family,
+    counts_as_completed_activity,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +152,8 @@ OUTPUT_COLUMNS = [
     # activity
     "fighter_a_days_since_last_fight", "fighter_b_days_since_last_fight",
     "days_since_last_fight_diff",
+    # versioned experimental inactivity family (production allowlist unchanged)
+    *LAYOFF_FEATURE_COLUMNS,
 ]
 
 
@@ -160,12 +168,15 @@ def build_feature_rows(fights: list[dict]) -> pd.DataFrame:
     ordered = sorted(fights, key=lambda f: (f["date"], f["fight_id"]))
 
     histories: dict[int, FighterHistory] = {}
+    layoff_histories: dict[int, LayoffHistory] = {}
     rows: list[dict] = []
 
     for f in ordered:
         a_id, b_id = f["fighter_a_id"], f["fighter_b_id"]
         hist_a = histories.setdefault(a_id, FighterHistory())
         hist_b = histories.setdefault(b_id, FighterHistory())
+        layoff_hist_a = layoff_histories.setdefault(a_id, LayoffHistory())
+        layoff_hist_b = layoff_histories.setdefault(b_id, LayoffHistory())
 
         # ------- 1 & 2: read PRE-fight state for both fighters -------
         rec_a, rec_b = hist_a.prior_record(), hist_b.prior_record()
@@ -173,6 +184,7 @@ def build_feature_rows(fights: list[dict]) -> pd.DataFrame:
         f5_a, f5_b = hist_a.recent_form(5), hist_b.recent_form(5)
         days_a = hist_a.days_since_last_fight(f["date"])
         days_b = hist_b.days_since_last_fight(f["date"])
+        layoff_features = build_layoff_feature_family(layoff_hist_a, layoff_hist_b, f.get("date"))
 
         # Age: prefer per-fight as-of value from the source; else DOB-derived.
         age_a = f.get("fighter_a_age")
@@ -240,12 +252,16 @@ def build_feature_rows(fights: list[dict]) -> pd.DataFrame:
             "fighter_a_days_since_last_fight": days_a,
             "fighter_b_days_since_last_fight": days_b,
             "days_since_last_fight_diff": diff(days_a, days_b),
+            **layoff_features,
         }
         rows.append(row)
 
         # ------- 5: ONLY NOW does the result update history -------
         hist_a.update(f["date"], int(f["fighter_a_won"]))
         hist_b.update(f["date"], 1 - int(f["fighter_a_won"]))
+        if counts_as_completed_activity(f):
+            layoff_hist_a.record_completed_fight(f.get("date"))
+            layoff_hist_b.record_completed_fight(f.get("date"))
 
     return pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
 

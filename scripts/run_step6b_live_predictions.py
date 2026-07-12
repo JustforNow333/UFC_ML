@@ -31,6 +31,10 @@ def main() -> None:
     p.add_argument("--training-data", default=DEFAULT_TRAINING_DATA,
                    help="Historical processed CSV used to reproduce the official model (read-only).")
     p.add_argument("--baseline-path", default="benchmarks/official_baseline.json")
+    p.add_argument(
+        "--model-artifact", default=None,
+        help="Optional versioned frozen artifact; its exact feature schema replaces the official default.",
+    )
     p.add_argument("--prediction-batch-id", default=None)
     p.add_argument("--overwrite-existing-pending", action="store_true", default=False,
                    help="Replace an existing PENDING prediction for the same fight.")
@@ -39,6 +43,14 @@ def main() -> None:
     p.add_argument(
         "--preserve-existing-ledger-bytes", action="store_true", default=False,
         help="Append only new rows and prove every existing ledger byte remains unchanged; incompatible with overwrite/duplicate flags.",
+    )
+    p.add_argument(
+        "--prediction-timing-scope", default=None,
+        help="Optional audit label stored with each prediction, for example late_supplemental_prebout.",
+    )
+    p.add_argument(
+        "--prebout-evidence", default=None,
+        help="Concise source/timestamp evidence that each submitted bout had not begun.",
     )
     p.add_argument("--random-seed", type=int, default=RANDOM_STATE)
     args = p.parse_args()
@@ -50,7 +62,10 @@ def main() -> None:
         allow_duplicate_predictions=args.allow_duplicate_predictions,
         overwrite_existing_pending=args.overwrite_existing_pending,
         preserve_existing_ledger_bytes=args.preserve_existing_ledger_bytes,
+        prediction_timing_scope=args.prediction_timing_scope,
+        prebout_evidence=args.prebout_evidence,
         random_seed=args.random_seed,
+        model_artifact_path=args.model_artifact,
     )
     print(f"Live predictions: batch {report['prediction_batch_id']} — {report['n_predictions_generated']} predictions "
           f"({report['n_failed_rows']} failed rows).")

@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import joblib
 from sklearn.metrics import brier_score_loss, log_loss
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,6 +40,7 @@ from ufc_pipeline.step6b_live_predictions import (  # noqa: E402
     train_official_model,
     validate_prediction_input,
 )
+from ufc_pipeline.step6a_pseudo_live_replay import feature_schema_version
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = REPO_ROOT / "benchmarks" / "official_baseline.json"
@@ -149,6 +151,30 @@ def test_feature_expected_win_prob_is_not_treated_as_result():
     v = validate_prediction_input(card_df([("A", "B")]), BASE_NUMERIC)
     assert v["ok"] is True
     assert "fighter_a_expected_win_prob" not in v["forbidden_result_columns"]
+
+
+def test_old_artifact_rejects_new_layoff_schema(tmp_path):
+    official = list(BASE_NUMERIC)
+    artifact = tmp_path / "old.joblib"
+    joblib.dump({
+        "pipeline": None, "platt": None, "base_numeric": official,
+        "model_version": "old", "calibration_version": "platt",
+        "feature_schema_version": feature_schema_version(official),
+        "training_metadata": {}, "config": {"raw_weight_class": "dropped"},
+    }, artifact)
+    row = {
+        "event_date": "2026-08-01", "event_name": "Schema Test",
+        "fighter_a": "A", "fighter_b": "B", "weight_class": "Lightweight",
+        **{column: 0.0 for column in official},
+        "fighter_a_layoff_days": 100.0,
+    }
+    card = tmp_path / "card.csv"
+    pd.DataFrame([row]).to_csv(card, index=False)
+    with pytest.raises(ValueError, match="does not match the frozen artifact"):
+        run_live_predictions(
+            str(card), ledger_path=str(tmp_path / "ledger.csv"), output_dir=str(tmp_path),
+            model_artifact_path=str(artifact),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +469,29 @@ def test_batch_leakage_and_drift_schema(e2e):
     for key in ("n_rows", "n_out_of_range_cells", "n_rows_nan_heavy", "n_low_history_flagged_rows",
                 "n_features_elevated_missingness"):
         assert key in drift
+
+
+def test_late_prebout_scope_and_evidence_are_stored(e2e):
+    _report, tmp, _ledger, outdir, tcsv = e2e
+    card = tmp / "late-card.csv"
+    card_df([("Late A", "Late B")], event_name="UFC Late Test").to_csv(card, index=False)
+    ledger = tmp / "late-ledger.csv"
+    report = run_live_predictions(
+        str(card), ledger_path=str(ledger), output_dir=str(outdir),
+        training_data=str(tcsv), baseline_path=None,
+        prediction_batch_id="ufc_test_official_late_supplemental_prebout_frozen",
+        prediction_timing_scope="late_supplemental_prebout",
+        prebout_evidence="checked-before-walkout", max_iter=800,
+    )
+    row = pd.read_csv(ledger, keep_default_na=False).iloc[0]
+    assert report["prediction_timing_scope"] == "late_supplemental_prebout"
+    assert report["prebout_evidence"] == "checked-before-walkout"
+    assert "prediction_timing_scope=late_supplemental_prebout" in row["notes"]
+    assert "prebout_evidence=checked-before-walkout" in row["notes"]
+    assert all(row[field] == "" for field in (
+        "target_a_win", "winner", "result_source", "resolved_timestamp_utc",
+        "log_loss", "brier", "correct_prediction",
+    ))
 
 
 def test_e2e_resolution_and_report(e2e):

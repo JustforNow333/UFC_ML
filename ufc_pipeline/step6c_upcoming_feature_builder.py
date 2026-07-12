@@ -39,6 +39,7 @@ from ufc_pipeline.elo import DEFAULT_K, DEFAULT_STARTING_ELO, expected_score, ru
 from ufc_pipeline.feature_diagnostics import official_step3c_features
 from ufc_pipeline.features import FIGHTS_WITH_ELO_QUERY, build_feature_rows
 from ufc_pipeline.matchup_features import add_matchup_features, build_against_rows
+from ufc_pipeline.layoff_features import LAYOFF_CANDIDATE_A_FEATURES, LAYOFF_CANDIDATE_B_FEATURES
 from ufc_pipeline.modeling import TARGET
 from ufc_pipeline.stats_features import STATS_QUERY, build_step3b_rows
 from ufc_pipeline.step6b_live_predictions import validate_prediction_input
@@ -57,6 +58,30 @@ FORBIDDEN_OUTPUT_COLUMNS = frozenset({
 # Synthetic fight_ids are large negatives so they never collide with real ids
 # and are obviously non-historical.
 _SYNTHETIC_FIGHT_ID_BASE = -1_000_000
+
+FEATURE_SET_ADDITIONS = {
+    "official": [],
+    "layoff_a": LAYOFF_CANDIDATE_A_FEATURES,
+    "layoff_b": LAYOFF_CANDIDATE_B_FEATURES,
+}
+
+
+def model_features_for_set(feature_set: str = "official") -> list[str]:
+    """Exact ordered live schema for the official or layoff candidates."""
+    if feature_set not in FEATURE_SET_ADDITIONS:
+        raise ValueError(f"Unknown feature_set {feature_set!r}; choose from {sorted(FEATURE_SET_ADDITIONS)}")
+    official, _ = official_step3c_features()
+    return list(official) + list(FEATURE_SET_ADDITIONS[feature_set])
+
+# Small, reviewed aliases only. These are identity assertions, not fuzzy
+# matching: Bobby Green legally changed his name to King Green, and the
+# McKinney entry covers a known card-source typo. Similar-looking names such as
+# Gable Stevenson/Steveson and Kai Kamaka/Kai Kamaka III are deliberately not
+# collapsed.
+VALIDATED_FIGHTER_ALIASES = {
+    "bobby green": "king green",
+    "terrance mickney": "terrance mckinney",
+}
 
 
 def _now_utc() -> str:
@@ -124,14 +149,18 @@ def match_fighter(name, lookup: dict[str, list[dict]], allow_fuzzy: bool = False
     """Resolve a fighter name to a single historical fighter. Exact normalized
     match only (fuzzy is intentionally not implemented unless explicitly enabled,
     and even then stays a documented no-op placeholder)."""
-    key = normalize_fighter_name(name)
+    input_key = normalize_fighter_name(name)
+    key = VALIDATED_FIGHTER_ALIASES.get(input_key, input_key)
     if not key:
         return {"status": "empty", "fighter_id": None, "matched_name": None, "detail": "empty name"}
     candidates = lookup.get(key, [])
     if len(candidates) == 1:
         c = candidates[0]
+        detail = "exact normalized match"
+        if key != input_key:
+            detail = f"validated alias '{input_key}' -> '{key}'"
         return {"status": "matched", "fighter_id": c["fighter_id"], "matched_name": c["name"],
-                "attrs": c, "detail": "exact normalized match"}
+                "attrs": c, "detail": detail}
     if len(candidates) == 0:
         return {"status": "unmatched", "fighter_id": None, "matched_name": None,
                 "detail": f"no historical fighter with normalized name '{key}'"}
@@ -258,9 +287,10 @@ def build_upcoming_features(
     allow_fuzzy_match: bool = False,
     k: float = DEFAULT_K,
     starting_elo: float = DEFAULT_STARTING_ELO,
+    feature_set: str = "official",
 ) -> dict:
     """Return {'features': DataFrame, 'report': dict, 'match_review': list}."""
-    base_numeric, _cat = official_step3c_features()
+    base_numeric = model_features_for_set(feature_set)
     matchups_df = matchups_df.reset_index(drop=True)  # positional row_status indexing
     schema = validate_matchup_schema(matchups_df, event_date_override)
     if not schema["ok"]:
@@ -372,7 +402,7 @@ def build_upcoming_features(
 
     features_df = _assemble_output(built_rows, base_numeric)
     report = _build_report(matchups_df, features_df, match_review, failed, time_safety,
-                           resolved, base_numeric, db_path, schema)
+                           resolved, base_numeric, db_path, schema, feature_set)
     return {"features": features_df, "report": report, "match_review": match_review}
 
 
@@ -401,8 +431,11 @@ def _assemble_output(built_rows: list[tuple], base_numeric: list[str]) -> pd.Dat
 # Report + Step 6B validation
 # ---------------------------------------------------------------------------
 
-def validate_output_for_step6b(features_df: pd.DataFrame) -> dict:
-    base_numeric, _ = official_step3c_features()
+def validate_output_for_step6b(
+    features_df: pd.DataFrame, base_numeric: list[str] | None = None,
+) -> dict:
+    if base_numeric is None:
+        base_numeric = model_features_for_set("official")
     v = validate_prediction_input(features_df, base_numeric)
     return {
         "ok": v["ok"],
@@ -426,20 +459,21 @@ def _missing_feature_summary(features_df: pd.DataFrame, base_numeric: list[str])
 
 
 def _build_report(matchups_df, features_df, match_review, failed, time_safety, resolved,
-                  base_numeric, db_path, schema) -> dict:
+                  base_numeric, db_path, schema, feature_set) -> dict:
     unmatched = sorted({
         r["input_fighter_a"] for r in match_review if r["fighter_a_status"] == "unmatched"
     } | {r["input_fighter_b"] for r in match_review if r["fighter_b_status"] == "unmatched"})
     ambiguous = sorted({
         r["input_fighter_a"] for r in match_review if r["fighter_a_status"] == "ambiguous"
     } | {r["input_fighter_b"] for r in match_review if r["fighter_b_status"] == "ambiguous"})
-    step6b_validation = validate_output_for_step6b(features_df) if len(features_df) else {
+    step6b_validation = validate_output_for_step6b(features_df, base_numeric) if len(features_df) else {
         "ok": None, "note": "no rows built"}
     low_history = [t for t in time_safety if t["fighter_a_prior_fights"] < 3 or t["fighter_b_prior_fights"] < 3]
 
     return {
         "generated_at": _now_utc(),
         "run": "step6c_upcoming_feature_builder",
+        "feature_set": feature_set,
         "history_input": db_path,
         "changes_data_processed": False,
         "changes_official_baseline_file": False,
@@ -497,6 +531,7 @@ def run_build(
     review_matches_output: str | None = None,
     overwrite: bool = False,
     validate_for_step6b: bool = True,
+    feature_set: str = "official",
 ) -> dict:
     out_path = Path(output)
     if out_path.exists() and not overwrite:
@@ -507,6 +542,7 @@ def run_build(
     result = build_upcoming_features(
         matchups_df, db_path=history_input, event_date_override=event_date,
         strict_name_match=strict_name_match, allow_fuzzy_match=allow_fuzzy_match,
+        feature_set=feature_set,
     )
     features_df, report, match_review = result["features"], result["report"], result["match_review"]
     report["matchup_input"] = matchups_csv

@@ -39,6 +39,14 @@ def main() -> None:
     p.add_argument("--run-predictions", action="store_true", default=False,
                    help="After building features, chain straight into Step 6B live predictions.")
     p.add_argument("--ledger", default="data/live/live_predictions.csv", help="Ledger for --run-predictions.")
+    p.add_argument(
+        "--feature-set", choices=("official", "layoff_a", "layoff_b"), default="official",
+        help="Versioned feature schema; official remains the production default.",
+    )
+    p.add_argument(
+        "--prediction-model-artifact", default=None,
+        help="Required with --run-predictions for a non-official feature set.",
+    )
     args = p.parse_args()
 
     report = run_build(
@@ -47,6 +55,7 @@ def main() -> None:
         strict_name_match=args.strict_name_match, allow_fuzzy_match=args.allow_fuzzy_match,
         review_matches_output=args.review_matches_output, overwrite=args.overwrite,
         validate_for_step6b=args.validate_for_step6b,
+        feature_set=args.feature_set,
     )
     v = report["step6b_validation"]
     print(f"Step 6C: built {report['n_feature_rows_built']} feature rows "
@@ -61,7 +70,12 @@ def main() -> None:
 
     if args.run_predictions and report["n_feature_rows_built"]:
         from ufc_pipeline.step6b_live_predictions import run_live_predictions
-        pred = run_live_predictions(input_csv=args.output, ledger_path=args.ledger, output_dir=args.output_dir)
+        if args.feature_set != "official" and not args.prediction_model_artifact:
+            raise ValueError("Experimental layoff predictions require --prediction-model-artifact.")
+        pred = run_live_predictions(
+            input_csv=args.output, ledger_path=args.ledger, output_dir=args.output_dir,
+            model_artifact_path=args.prediction_model_artifact,
+        )
         print(f"  chained Step 6B: {pred['n_predictions_generated']} predictions -> {pred['ledger_path']}")
 
 

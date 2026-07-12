@@ -81,7 +81,8 @@ def write_ledger(path: Path, rows: list[dict], columns=LEDGER_COLUMNS) -> None:
 def write_manifest(path: Path, rows: list[dict]) -> None:
     columns = [
         "event_id", "event_name", "event_date", "fighter_a", "fighter_b", "weight_class",
-        "card_section", "bout_order", "fight_status", "source", "source_checked_at",
+        "card_section", "bout_order", "fight_status", "prediction_availability",
+        "prediction_unavailable_reason", "source", "source_checked_at",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -188,6 +189,31 @@ def test_main_and_supplemental_batches_share_one_event(tmp_path):
     assert [(fight["fight_id"], fight["card_section"]) for fight in events[0]["fights"]] == [
         ("main", "main_event"), ("prelim", "prelims"),
     ]
+
+
+def test_confirmed_manifest_fight_without_prediction_is_visible(tmp_path):
+    ledger = tmp_path / "ledger.csv"
+    write_ledger(ledger, [prediction_row("predicted")])
+    write_manifest(tmp_path / "data/live/event_manifests/card.csv", [
+        {"event_id": "ufc-test", "event_name": "UFC Test One", "event_date": "2026-08-01",
+         "fighter_a": "Alpha Fighter", "fighter_b": "Beta Fighter", "weight_class": "Lightweight",
+         "card_section": "main_card", "bout_order": 1, "fight_status": "confirmed",
+         "prediction_availability": "available", "prediction_unavailable_reason": "",
+         "source": "official", "source_checked_at": "2026-07-01T00:00:00Z"},
+        {"event_id": "ufc-test", "event_name": "UFC Test One", "event_date": "2026-08-01",
+         "fighter_a": "Gamma Fighter", "fighter_b": "Delta Fighter", "weight_class": "Welterweight",
+         "card_section": "prelims", "bout_order": 2, "fight_status": "confirmed",
+         "prediction_availability": "unavailable_started",
+         "prediction_unavailable_reason": "Fight began before supplemental prediction generation",
+         "source": "official", "source_checked_at": "2026-07-01T00:00:00Z"},
+    ])
+    event = load_upcoming_predictions(dashboard_config(tmp_path, ledger))["events"][0]
+    assert event["fight_count"] == 2
+    assert event["predicted_fight_count"] == 1
+    unavailable = event["fights"][1]
+    assert unavailable["prediction_available"] is False
+    assert unavailable["fighter_a_probability"] is None
+    assert unavailable["prediction_unavailable_reason"].startswith("Fight began")
 
 
 def test_cancelled_manifest_fight_is_hidden_but_ledger_preserved(tmp_path):
@@ -373,6 +399,7 @@ def test_static_frontend_is_served_with_required_states_and_components(tmp_path)
     assert "No upcoming official predictions are currently available." in javascript
     assert "Upcoming predictions could not be loaded." in javascript
     assert "Official frozen prediction" in javascript
+    assert "Prediction unavailable" in javascript
     assert 'toFixed(1)' in javascript
     assert "predicted_winner_side" in javascript
     assert "barA.style.width" in javascript and "barB.style.width" in javascript
@@ -397,11 +424,47 @@ def test_production_ufc329_rows_parse_without_mutation():
     before = hashlib.sha256(DEFAULT_LEDGER_PATH.read_bytes()).hexdigest()
     payload = load_upcoming_predictions(DashboardConfig(today=date(2026, 7, 11)))
     assert len(payload["events"]) == 1
-    assert payload["events"][0]["fight_count"] == 8
+    assert payload["events"][0]["fight_count"] == 14
+    assert payload["events"][0]["predicted_fight_count"] == 11
     assert payload["diagnostics"]["invalid_row_count"] == 0
     assert all(fight["weight_class"] for fight in payload["events"][0]["fights"])
-    assert [fight["card_section"] for fight in payload["events"][0]["fights"]] == [
-        "main_event", "main_card", "main_card", "main_card",
-        "prelims", "prelims", "early_prelims", "early_prelims",
-    ]
+    assert sum(not fight["prediction_available"] for fight in payload["events"][0]["fights"]) == 3
+    assert {fight["fighter_a"] for fight in payload["events"][0]["fights"] if not fight["prediction_available"]} == {
+        "Gable Steveson", "Farid Basharat", "Ryan Gandra",
+    }
     assert hashlib.sha256(DEFAULT_LEDGER_PATH.read_bytes()).hexdigest() == before
+
+
+def test_production_ufc329_manifest_has_14_unique_matchups():
+    path = REPO_ROOT / "data/live/event_manifests/ufc329_20260711_card.csv"
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    pairs = {
+        frozenset((row["fighter_a_name"], row["fighter_b_name"]))
+        for row in rows if row["fight_status"] == "confirmed"
+    }
+    assert len(rows) == len(pairs) == 14
+    assert {row["card_section"] for row in rows} == {"main_event", "main_card", "prelims", "early_prelims"}
+
+
+def test_original_ufc329_ledger_prefix_and_new_rows_are_auditable():
+    raw = DEFAULT_LEDGER_PATH.read_bytes()
+    assert hashlib.sha256(raw[:3476]).hexdigest() == "d9868efba4ec15a764e0573c262f446efd289e2a3d22ff6e6bb1e753850c4dbf"
+    with DEFAULT_LEDGER_PATH.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    supplemental = [r for r in rows if "late_supplemental_prebout" in r["prediction_batch_id"]]
+    assert len(supplemental) == 3
+    assert len({frozenset((r["fighter_a"], r["fighter_b"])) for r in rows}) == len(rows)
+    for row in supplemental:
+        assert "prediction_timing_scope=late_supplemental_prebout" in row["notes"]
+        assert row["status"] == "pending"
+        assert all(not row[field] for field in (
+            "target_a_win", "winner", "result_source", "resolved_timestamp_utc",
+            "log_loss", "brier", "correct_prediction",
+        ))
+    pairs = {frozenset((r["fighter_a"], r["fighter_b"])) for r in rows}
+    assert frozenset(("Ryan Gandra", "Zachary Reese")) not in pairs
+    created = {r["fighter_a"]: r["prediction_timestamp_utc"] for r in supplemental}
+    assert created["Kai Kamaka III"] < "2026-07-11T23:00:00+00:00"
+    assert created["King Green"] < "2026-07-12T01:00:00+00:00"
+    assert "live_Gandra_bout_2_noted" in supplemental[0]["notes"]

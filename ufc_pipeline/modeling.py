@@ -45,6 +45,12 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from ufc_pipeline.layoff_features import (
+    LAYOFF_CANDIDATE_A_FEATURES,
+    LAYOFF_CANDIDATE_B_FEATURES,
+    LAYOFF_FEATURE_COLUMNS,
+)
+
 RANDOM_STATE = 42
 TARGET = "fighter_a_won"
 
@@ -110,7 +116,11 @@ STEP3C_MODEL_FEATURES = [
     "opponent_pressure_absorption_advantage",
     "matchup_history_missing",
 ]
-ALLOWED_HISTORICAL_FEATURES = set(STEP3B_MODEL_FEATURES) | set(STEP3C_MODEL_FEATURES)
+ALLOWED_HISTORICAL_FEATURES = (
+    set(STEP3B_MODEL_FEATURES)
+    | set(STEP3C_MODEL_FEATURES)
+    | set(LAYOFF_FEATURE_COLUMNS)
+)
 
 # Any selected input feature matching one of these substrings aborts training.
 # (fighter_a_won is allowed as the TARGET only, and is checked separately.)

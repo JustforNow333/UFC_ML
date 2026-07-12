@@ -224,7 +224,7 @@ feature row and target, and (4) only then updates both histories with the
 result. Same-date fights keep dataset order via `fight_id`; out-of-order
 input is re-sorted internally.
 
-**Columns created** (51 total; every `*_diff` is fighter_a − fighter_b):
+**Columns created** (65 total; every signed `*_diff` is fighter_a − fighter_b):
 
 - *Identity/result:* `fight_id`, `date`, `event`, `fighter_a`, `fighter_b`,
   `winner`, `fighter_a_won` (target), `weight_class`, `method`, `round` —
@@ -244,7 +244,11 @@ input is re-sorted internally.
   current fight.
 - *Recent form:* `wins_last_3`, `win_pct_last_3`, `wins_last_5`,
   `win_pct_last_5` per fighter + diffs, over the previous ≤3/≤5 fights.
-- *Activity:* `days_since_last_fight` per fighter + diff.
+- *Activity:* the legacy `days_since_last_fight` per fighter + diff, plus the
+  experimental layoff family: per-side raw/log days, signed and absolute
+  differences, missing flags, and `<60` / `>=365` / `>=730` indicators.
+  Experimental layoff dates must be strictly earlier than the current date;
+  same-day bouts never establish an order for this family.
 
 **Missing values** are written as real nulls (empty CSV cells) — never
 silently filled:
@@ -256,6 +260,34 @@ silently filled:
   which is exact, not imputed.
 - Missing age/height/reach in the source: null.
 - Any diff with a null side: null.
+
+### Experimental layoff ablation (disabled)
+
+The canonical DB stores decisive UFC bouts only, so the new family means time
+since the last stored decisive UFC fight—not complete professional MMA
+inactivity. Draws/no-contests are absent upstream and cannot be counted.
+Debuts retain null raw/log/threshold values plus an explicit missing flag; the
+sklearn pipeline learns numeric imputation from the training window only.
+
+The official 43-feature model remains unchanged. Versioned schemas are:
+
+- `layoff_a`: official inputs plus per-side raw days, signed difference, and
+  two missing indicators (48 total).
+- `layoff_b`: official inputs plus the complete 14-column family (57 total).
+
+Run the controlled locked-split experiment with:
+
+```bash
+.venv/bin/python scripts/build_prefight_features_step3c.py --db data/ufc.db \
+  --output data/processed/experiments/layoff_20260711/ufc_prefight_features_step3c_layoff.csv
+.venv/bin/python scripts/run_layoff_feature_evaluation.py \
+  --input data/processed/experiments/layoff_20260711/ufc_prefight_features_step3c_layoff.csv
+```
+
+The 2026-07-11 ablation found both candidates worse than the reproduced
+baseline on log loss and Brier, so they remain disabled. Candidate artifacts
+are experimental and Step 6B validates their exact stored feature order when
+`--model-artifact` is used.
 
 **Intentionally excluded for now:** betting odds, rankings, style-based
 rolling stats (strikes/takedowns/control), post-fight totals, and any
@@ -813,6 +845,14 @@ contributing `batch_ids`. Supported card sections render in this order: Main
 Event, Main Card, Prelims, Early Prelims. `bout_order=1` means the main event;
 larger values proceed down the published card toward the opening bout.
 
+Confirmed manifest rows are the dashboard's card inventory. The API left-joins
+an applicable frozen ledger prediction when one exists; otherwise it emits a
+neutral `prediction_available=false` fight with the manifest's explicit
+`prediction_unavailable_reason`. The frontend renders that state as
+`Prediction unavailable` and never substitutes a 50/50 probability. This lets
+a complete card remain visible when a bout was already underway or the frozen
+pipeline could not resolve a fighter safely.
+
 Only manifest rows with `fight_status=confirmed` are active. Marking a matchup
 `cancelled`, `postponed`, or `replaced` hides it from the upcoming view while
 preserving its frozen ledger row for audit. Events without a manifest and fights
@@ -824,6 +864,12 @@ For a supplemental production batch whose existing CSV serialization must stay
 byte-for-byte frozen, Step 6B supports `--preserve-existing-ledger-bytes`. This
 mode appends only the accepted tail, verifies the old byte prefix afterward,
 and refuses use with overwrite or duplicate-version flags.
+
+Late event-day supplements may also pass
+`--prediction-timing-scope late_supplemental_prebout` and a concise
+`--prebout-evidence` value. These audit labels are stored in each appended
+row's notes and in the batch report while the ordinary exact UTC prediction
+timestamp remains authoritative.
 
 Rows are displayable only when they are `live_forward`, unresolved, and their
 batch identifier marks them as both `official` and `frozen`. Fighter/event

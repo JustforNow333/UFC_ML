@@ -1,0 +1,100 @@
+{
+  "timestamp": "2024-04-12T02:00:00Z",
+  "previous_timestamp": "2024-04-12T01:55:00Z",
+  "next_timestamp": "2024-04-12T02:05:00Z",
+  "data": [
+    {
+      "id": "toa-ufc300-gaethje-holloway",
+      "sport_key": "mma_mixed_martial_arts",
+      "sport_title": "MMA",
+      "commence_time": "2024-04-14T02:00:00Z",
+      "home_team": "Justin Gaethje",
+      "away_team": "Max Holloway",
+      "card_section": "main_card",
+      "bookmakers": [
+        {
+          "key": "draftkings",
+          "title": "DraftKings",
+          "last_update": "2024-04-12T01:58:00Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "last_update": "2024-04-12T01:58:00Z",
+              "outcomes": [
+                {"name": "Justin Gaethje", "price": 1.65},
+                {"name": "Max Holloway", "price": 2.3}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "last_update": "2024-04-12T01:57:00Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Max Holloway", "price": 2.35},
+                {"name": "Justin Gaethje", "price": 1.62}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "pinnacle",
+          "title": "Pinnacle",
+          "last_update": "2024-04-12T01:59:00Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Justin Gaethje", "price": 1.68},
+                {"name": "Max Holloway", "price": 2.25}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "polymarket",
+          "title": "Polymarket",
+          "last_update": "2024-04-12T01:59:00Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Justin Gaethje", "price": 1.7},
+                {"name": "Max Holloway", "price": 2.2}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "toa-ufc300-green-miller",
+      "sport_key": "mma_mixed_martial_arts",
+      "sport_title": "MMA",
+      "commence_time": "2024-04-13T23:00:00Z",
+      "home_team": "Bobby Green",
+      "away_team": "Jim Miller",
+      "card_section": "prelims",
+      "bookmakers": [
+        {
+          "key": "betmgm",
+          "title": "BetMGM",
+          "last_update": "2024-04-12T01:50:00Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Bobby Green", "price": 1.45},
+                {"name": "Jim Miller", "price": 2.8}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

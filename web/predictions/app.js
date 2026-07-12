@@ -50,6 +50,27 @@ function buildFighter(fight, side) {
 }
 
 function buildFightCard(fight) {
+  if (!fight.prediction_available) {
+    const card = createElement("article", "fight-card unavailable");
+    card.dataset.testid = "fight-card";
+    const top = createElement("div", "card-topline");
+    top.append(
+      createElement("span", "bout-label", fight.bout_label || "UFC Bout"),
+      createElement("span", "unavailable-badge", "Prediction unavailable")
+    );
+    const names = createElement("div", "unavailable-fighters");
+    names.append(
+      createElement("p", "fighter-name", fight.fighter_a),
+      createElement("span", "versus", "vs."),
+      createElement("p", "fighter-name", fight.fighter_b)
+    );
+    card.append(
+      top,
+      names,
+      createElement("p", "unavailable-reason", fight.prediction_unavailable_reason || "No validated prediction is available.")
+    );
+    return card;
+  }
   const card = createElement("article", "fight-card");
   card.dataset.testid = "fight-card";
 
@@ -106,7 +127,7 @@ function buildEventSection(event) {
   heading.lastElementChild.id = `${event.event_id}-title`;
   header.append(
     heading,
-    createElement("span", "event-count", `${event.fight_count} predicted ${event.fight_count === 1 ? "fight" : "fights"}`)
+    createElement("span", "event-count", `${event.predicted_fight_count} predictions / ${event.fight_count} fights`)
   );
 
   const cardSections = createElement("div", "card-sections");

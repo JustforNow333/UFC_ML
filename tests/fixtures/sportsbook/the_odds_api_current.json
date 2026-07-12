@@ -1,0 +1,26 @@
+[
+  {
+    "id": "toa-current-example",
+    "sport_key": "mma_mixed_martial_arts",
+    "sport_title": "MMA",
+    "commence_time": "2026-08-01T23:00:00Z",
+    "home_team": "Example Fighter A",
+    "away_team": "Example Fighter B",
+    "bookmakers": [
+      {
+        "key": "caesars",
+        "title": "Caesars Sportsbook",
+        "last_update": "2026-07-31T23:00:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Example Fighter A", "price": 1.91},
+              {"name": "Example Fighter B", "price": 1.91}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

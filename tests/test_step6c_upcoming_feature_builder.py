@@ -124,6 +124,20 @@ def test_fuzzy_matching_disabled_by_default():
     assert match_fighter("Jon Jonez", lookup, allow_fuzzy=True)["status"] == "unmatched"
 
 
+def test_reviewed_aliases_resolve_but_similar_names_do_not():
+    lookup = build_fighter_lookup(pd.DataFrame([
+        {"fighter_id": 35, "name": "King Green", "height": "178", "reach": "180", "date_of_birth": "1986-09-09"},
+        {"fighter_id": 185, "name": "Terrance McKinney", "height": "178", "reach": "185", "date_of_birth": "1994-09-15"},
+        {"fighter_id": 516, "name": "Elisha Ellison", "height": "183", "reach": "198", "date_of_birth": "1997-03-05"},
+        {"fighter_id": 900, "name": "Gable Steveson", "height": "185", "reach": "200", "date_of_birth": "2000-05-31"},
+    ]))
+    assert match_fighter("Bobby Green", lookup)["fighter_id"] == 35
+    assert match_fighter("Terrance Mickney", lookup)["fighter_id"] == 185
+    assert match_fighter("Elisha Ellison", lookup)["fighter_id"] == 516
+    assert match_fighter("Gable Steveson", lookup)["fighter_id"] == 900
+    assert match_fighter("Gable Stevenson", lookup)["status"] == "unmatched"
+
+
 # ---------------------------------------------------------------------------
 # Matchup schema validation
 # ---------------------------------------------------------------------------
@@ -320,3 +334,33 @@ def test_built_features_feed_step6b_validation_directly(history_db, tmp_path):
     v = validate_prediction_input(built, BASE_NUMERIC)
     assert v["ok"] is True
     assert "winner" not in built.columns and "fighter_a_won" not in built.columns
+
+
+def test_layoff_historical_live_parity_and_candidate_schema(history_db):
+    from ufc_pipeline.elo import run_elo
+    from ufc_pipeline.features import build_feature_rows
+    from ufc_pipeline.layoff_features import LAYOFF_CANDIDATE_B_FEATURES
+    from ufc_pipeline.step6c_upcoming_feature_builder import load_history, model_features_for_set
+
+    matchups = _matchups([("Jon Jones", "Stipe Miocic")], event_date="2023-06-01")
+    live = build_upcoming_features(matchups, db_path=history_db, feature_set="layoff_b")["features"].iloc[0]
+
+    history = load_history(history_db)
+    real_before = [f for f in history["fights"] if str(f["date"]) < "2023-06-01"]
+    _snapshots, ratings = run_elo(real_before)
+    direct_fight = {
+        "fight_id": -99, "date": "2023-06-01", "event": "UFC Test",
+        "fighter_a_id": 1, "fighter_b_id": 2, "fighter_a": "Jon Jones", "fighter_b": "Stipe Miocic",
+        "winner": None, "fighter_a_won": 0, "weight_class": "Lightweight",
+        "fighter_a_pre_elo": ratings[1], "fighter_b_pre_elo": ratings[2],
+        "fighter_a_expected_win_prob": 0.5, "fighter_b_expected_win_prob": 0.5,
+        "_synthetic": True,
+    }
+    historical_equivalent = build_feature_rows(real_before + [direct_fight])
+    direct = historical_equivalent[historical_equivalent["fight_id"] == -99].iloc[0]
+    for column in LAYOFF_CANDIDATE_B_FEATURES:
+        if pd.isna(direct[column]):
+            assert pd.isna(live[column])
+        else:
+            assert live[column] == pytest.approx(direct[column])
+    assert list(live.index[5:]) == model_features_for_set("layoff_b")
